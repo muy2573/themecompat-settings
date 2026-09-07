@@ -2,6 +2,8 @@ package com.muy257.themecompat.settings;
 
 import android.content.ContentResolver;
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 
 import com.muy257.themecompat.R;
@@ -321,8 +323,7 @@ final class MtzCompatibilityPatcher {
         LinkedHashMap<String, byte[]> additions = new LinkedHashMap<>();
         List<String> notes = new ArrayList<>();
         if (SETTINGS_MODULE.equals(moduleName)) {
-            int a11yAdded = repairSettingsAccessibilityIcon(snapshot, additions, a11yLight, a11yDark);
-            if (a11yAdded > 0) notes.add("补齐辅助功能磁贴图标 ×" + a11yAdded);
+            repairSettingsAccessibilityIcon(snapshot, additions, notes, a11yLight, a11yDark);
         }
         int mmsDarkAliases = repairMmsDarkWindowAliases(moduleName, snapshot, additions);
         boolean mmsDarkAliasesHandled = mmsDarkAliases > 0;
@@ -468,32 +469,209 @@ final class MtzCompatibilityPatcher {
     }
 
     /**
-     * The pack recolors every Settings home entry chip to its own pink except
-     * the accessibility one — ic_accessibility_function is absent from the
-     * module and the tile keeps the stock blue.  Insert the original chip art
-     * re-tinted to the pack's two palettes (sampled from its own adapted
-     * entry icons): light is the pale-pink chip with the white glyph, night
-     * is the deeper rose chip with the black glyph.  The engine matches by
-     * resource name across types, so a bitmap also replaces the stock vector
-     * (the same mechanism that carries ic_device_connection).  A future pack
-     * that ships its own file wins because both paths are skipped when
-     * already present.
+     * The pack recolors every Settings home entry chip to its own accent
+     * except the accessibility one — ic_accessibility_function is absent from
+     * the module and the tile keeps the stock colour.  Insert the bundled
+     * chip art re-tinted per pack: the accent is sampled from the pack's own
+     * adapted home chips (their white and black glyph pixels excluded), and
+     * every non-white non-black pixel of the bundled art is re-mixed from the
+     * bundled chip colour onto that accent, so the white or black glyph and
+     * the anti-aliased edges stay intact.  The engine matches by resource
+     * name across types, so a bitmap also replaces the stock vector (the same
+     * mechanism that carries ic_device_connection).  A pack that ships its
+     * own file wins because both paths are skipped when already present; a
+     * pack with no sampleable chip falls back to the bundled colours
+     * verbatim.
      */
-    private static int repairSettingsAccessibilityIcon(ModuleSnapshot snapshot,
-                                                       Map<String, byte[]> additions,
-                                                       byte[] lightIcon, byte[] darkIcon) {
+    private static void repairSettingsAccessibilityIcon(ModuleSnapshot snapshot,
+                                                        Map<String, byte[]> additions,
+                                                        List<String> notes,
+                                                        byte[] lightIcon, byte[] darkIcon) {
+        if (lightIcon == null || lightIcon.length == 0
+                || darkIcon == null || darkIcon.length == 0) return;
+        boolean lightPresent = snapshot.names.contains(ACCESSIBILITY_ICON_LIGHT);
+        boolean darkPresent = snapshot.names.contains(ACCESSIBILITY_ICON_DARK);
+        if (lightPresent && darkPresent) return;
+        int sampledLight = sampleChipAccent(snapshot.smallFiles, false);
+        int sampledDark = sampleChipAccent(snapshot.smallFiles, true);
+        if (sampledDark == 0) sampledDark = sampledLight;
         int added = 0;
-        if (lightIcon != null && lightIcon.length > 0
-                && !snapshot.names.contains(ACCESSIBILITY_ICON_LIGHT)) {
-            additions.put(ACCESSIBILITY_ICON_LIGHT, lightIcon);
+        boolean tinted = false;
+        if (!lightPresent) {
+            byte[] icon = tintedOrBundled(lightIcon, sampledLight, false);
+            additions.put(ACCESSIBILITY_ICON_LIGHT, icon);
             added++;
+            tinted |= icon != lightIcon;
         }
-        if (darkIcon != null && darkIcon.length > 0
-                && !snapshot.names.contains(ACCESSIBILITY_ICON_DARK)) {
-            additions.put(ACCESSIBILITY_ICON_DARK, darkIcon);
+        if (!darkPresent) {
+            byte[] icon = tintedOrBundled(darkIcon, sampledDark, true);
+            additions.put(ACCESSIBILITY_ICON_DARK, icon);
             added++;
+            tinted |= icon != darkIcon;
         }
-        return added;
+        if (added > 0) {
+            notes.add("补齐辅助功能磁贴图标 ×" + added
+                    + (tinted ? "（按包内磁贴主色重着色）" : "（包内无磁贴主色，用内置配色）"));
+        }
+    }
+
+    private static byte[] tintedOrBundled(byte[] icon, int accent, boolean dark) {
+        if (accent == 0) return icon;
+        byte[] tinted = retintChipIcon(icon, accent, dark);
+        return tinted != null ? tinted : icon;
+    }
+
+    /** Settings home chip art: ic_*.png below either drawable-xxhdpi root. */
+    private static boolean isChipSampleCandidate(String name) {
+        if (!name.endsWith(".png") || name.contains(".9.")) return false;
+        return name.startsWith("res/drawable-xxhdpi/ic_")
+                || name.startsWith("nightmode/res/drawable-xxhdpi/ic_");
+    }
+
+    private static final int ACCENT_ALPHA_FLOOR = 200;
+    private static final int WHITE_CHANNEL_FLOOR = 245;
+    private static final int WHITE_SPREAD_CEILING = 10;
+    private static final int BLACK_CHANNEL_CEILING = 60;
+
+    /**
+     * Dominant non-white non-black colour across the pack's own adapted
+     * chips.  Colours are bucketed at 5-bit-per-channel resolution and the
+     * winning bucket is averaged back into one exact colour.
+     */
+    private static int sampleChipAccent(Map<String, byte[]> files, boolean night) {
+        String prefix = night ? "nightmode/res/drawable-xxhdpi/" : "res/drawable-xxhdpi/";
+        Map<Integer, long[]> buckets = new HashMap<>();
+        for (Map.Entry<String, byte[]> entry : files.entrySet()) {
+            if (!entry.getKey().startsWith(prefix) || !isChipSampleCandidate(entry.getKey())) continue;
+            Bitmap bitmap = BitmapFactory.decodeByteArray(entry.getValue(), 0, entry.getValue().length);
+            if (bitmap == null) continue;
+            collectBitmapAccent(buckets, bitmap);
+            bitmap.recycle();
+        }
+        return averageDominantBucket(buckets);
+    }
+
+    private static int sampleBitmapAccent(Bitmap bitmap) {
+        Map<Integer, long[]> buckets = new HashMap<>();
+        collectBitmapAccent(buckets, bitmap);
+        return averageDominantBucket(buckets);
+    }
+
+    private static void collectBitmapAccent(Map<Integer, long[]> buckets, Bitmap bitmap) {
+        int[] pixels = new int[bitmap.getWidth() * bitmap.getHeight()];
+        bitmap.getPixels(pixels, 0, bitmap.getWidth(), 0, 0, bitmap.getWidth(), bitmap.getHeight());
+        for (int pixel : pixels) collectAccentPixel(buckets, pixel);
+    }
+
+    private static void collectAccentPixel(Map<Integer, long[]> buckets, int pixel) {
+        int alpha = (pixel >>> 24) & 0xFF;
+        if (alpha < ACCENT_ALPHA_FLOOR) return;
+        int red = (pixel >> 16) & 0xFF;
+        int green = (pixel >> 8) & 0xFF;
+        int blue = pixel & 0xFF;
+        int max = Math.max(red, Math.max(green, blue));
+        int min = Math.min(red, Math.min(green, blue));
+        if (max >= WHITE_CHANNEL_FLOOR && max - min <= WHITE_SPREAD_CEILING) return;
+        if (max <= BLACK_CHANNEL_CEILING) return;
+        int key = ((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3);
+        long[] sums = buckets.get(key);
+        if (sums == null) {
+            sums = new long[4];
+            buckets.put(key, sums);
+        }
+        sums[0]++;
+        sums[1] += red;
+        sums[2] += green;
+        sums[3] += blue;
+    }
+
+    private static int averageDominantBucket(Map<Integer, long[]> buckets) {
+        long bestCount = 0;
+        int bestKey = -1;
+        for (Map.Entry<Integer, long[]> bucket : buckets.entrySet()) {
+            if (bucket.getValue()[0] > bestCount) {
+                bestCount = bucket.getValue()[0];
+                bestKey = bucket.getKey();
+            }
+        }
+        if (bestKey < 0) return 0;
+        long[] sums = buckets.get(bestKey);
+        return ((int) (sums[1] / sums[0]) << 16) | ((int) (sums[2] / sums[0]) << 8)
+                | (int) (sums[3] / sums[0]);
+    }
+
+    /**
+     * Re-colours the bundled chip art onto the given accent.  White and black
+     * glyph pixels are kept untouched; every other pixel is treated as a mix
+     * of the art's own chip colour with white (light art) or black (dark
+     * art), and that mix ratio is re-applied against the new accent, which
+     * keeps anti-aliased glyph and corner edges smooth.
+     */
+    private static byte[] retintChipIcon(byte[] png, int accent, boolean dark) {
+        Bitmap source = BitmapFactory.decodeByteArray(png, 0, png.length);
+        if (source == null) return null;
+        int chip = sampleBitmapAccent(source);
+        if (chip == 0) {
+            source.recycle();
+            return null;
+        }
+        int width = source.getWidth();
+        int height = source.getHeight();
+        int[] pixels = new int[width * height];
+        source.getPixels(pixels, 0, width, 0, 0, width, height);
+        source.recycle();
+        int targetRed = (accent >> 16) & 0xFF;
+        int targetGreen = (accent >> 8) & 0xFF;
+        int targetBlue = accent & 0xFF;
+        int chipRed = (chip >> 16) & 0xFF;
+        int chipGreen = (chip >> 8) & 0xFF;
+        int chipBlue = chip & 0xFF;
+        for (int index = 0; index < pixels.length; index++) {
+            int pixel = pixels[index];
+            int alpha = (pixel >>> 24) & 0xFF;
+            int red = (pixel >> 16) & 0xFF;
+            int green = (pixel >> 8) & 0xFF;
+            int blue = pixel & 0xFF;
+            int max = Math.max(red, Math.max(green, blue));
+            int min = Math.min(red, Math.min(green, blue));
+            if (alpha == 0
+                    || (max >= WHITE_CHANNEL_FLOOR && max - min <= WHITE_SPREAD_CEILING)
+                    || max <= BLACK_CHANNEL_CEILING) continue;
+            if (dark) {
+                // pixel ≈ ratio · chip against a black base.
+                float ratio = (red + green + blue)
+                        / (float) Math.max(1, chipRed + chipGreen + chipBlue);
+                red = clampColor(Math.round(ratio * targetRed));
+                green = clampColor(Math.round(ratio * targetGreen));
+                blue = clampColor(Math.round(ratio * targetBlue));
+            } else {
+                // pixel ≈ ratio · chip against a white base; channels where the
+                // chip itself is near-white carry no signal and are skipped.
+                float weighted = 0f;
+                float weightSum = 0f;
+                weighted += chipRed < 255 ? 255 - red : 0f;
+                weightSum += chipRed < 255 ? 255 - chipRed : 0f;
+                weighted += chipGreen < 255 ? 255 - green : 0f;
+                weightSum += chipGreen < 255 ? 255 - chipGreen : 0f;
+                weighted += chipBlue < 255 ? 255 - blue : 0f;
+                weightSum += chipBlue < 255 ? 255 - chipBlue : 0f;
+                float ratio = weightSum > 0f ? weighted / weightSum : 1f;
+                red = clampColor(Math.round(ratio * targetRed + (1f - ratio) * 255f));
+                green = clampColor(Math.round(ratio * targetGreen + (1f - ratio) * 255f));
+                blue = clampColor(Math.round(ratio * targetBlue + (1f - ratio) * 255f));
+            }
+            pixels[index] = (alpha << 24) | (red << 16) | (green << 8) | blue;
+        }
+        Bitmap tinted = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        tinted.setPixels(pixels, 0, width, 0, 0, width, height);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        boolean encoded = tinted.compress(Bitmap.CompressFormat.PNG, 100, output);
+        tinted.recycle();
+        return encoded ? output.toByteArray() : null;
+    }
+
+    private static int clampColor(int value) {
+        return value < 0 ? 0 : Math.min(value, 255);
     }
 
     /** The bundled accessibility chip art shipped in res/raw. */
@@ -826,7 +1004,8 @@ final class MtzCompatibilityPatcher {
                 || name.endsWith("/search_mode_edit_text_bg_dark.9.png")
                 || name.endsWith("/miuix_appcompat_window_bg_drak.9.png")
                 || FILE_EXPLORER_NIGHT_CANVAS.equals(name)
-                || isFileExplorerDarkAlias(name);
+                || isFileExplorerDarkAlias(name)
+                || isChipSampleCandidate(name);
     }
 
     private static boolean isFileExplorerDarkAlias(String name) {
