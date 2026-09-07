@@ -28,3 +28,6 @@ com.android.updater
 com.android.providers.downloads.ui
 com.android.systemui
 miui.systemui.plugin
+com.miui.compass
+com.xiaomi.aiasst.service
+com.miui.greenguard
