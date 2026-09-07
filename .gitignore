@@ -1,0 +1,18 @@
+# Gradle
+.gradle/
+.gradle-dist/
+build/
+app/build/
+build_out.txt
+wrapper_out.txt
+
+# IDE
+.idea/
+*.iml
+
+# Machine-specific SDK path
+local.properties
+
+# Local audit artifacts (screenshots, decompile dumps)
+/*.png
+_analysis_v0256/

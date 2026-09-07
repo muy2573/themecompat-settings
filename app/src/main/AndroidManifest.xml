@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The restart-scope page resolves every LSPosed scope entry's
+         label; without this the visibility filter hides most packages. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <queries>
+        <package android:name="com.android.camera" />
+    </queries>
+    <application
+        android:allowBackup="false"
+        android:name=".settings.ThemeCompatApplication"
+        android:label="weeazn 澎湃3主题适配"
+        android:theme="@style/AppTheme">
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="weeazn 澎湃3主题第三方适配：复用当前主题资源，并为 HyperOS 3 页面处理兼容遮罩。" />
+        <meta-data android:name="xposedminversion" android:value="101" />
+        <!-- The official service AAR contributes this provider. Its classes
+             are packaged locally to retain compileSdk 36 compatibility, so
+             the manifest declaration is reproduced explicitly. -->
+        <provider
+            android:name="io.github.libxposed.service.XposedProvider"
+            android:authorities="${applicationId}.XposedService"
+            android:exported="true" />
+        <activity
+            android:name=".settings.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".settings.DetailActivity"
+            android:exported="false" />
+        <activity
+            android:name=".settings.TextPageActivity"
+            android:exported="false" />
+        <activity
+            android:name=".settings.HookAppsActivity"
+            android:exported="false" />
+        <activity
+            android:name=".settings.HookAppDetailActivity"
+            android:exported="false" />
+        <activity
+            android:name=".settings.AlphaActivity"
+            android:exported="false" />
+        <activity
+            android:name=".settings.RestartScopeActivity"
+            android:exported="false" />
+        <receiver
+            android:name=".settings.RootThemeExtractorReceiver"
+            android:exported="true" />
+    </application>
+</manifest>
