@@ -16,6 +16,16 @@ android {
         versionCode = 325
         versionName = "1.0.0"
     }
+
+    buildTypes {
+        // Release ships signed with the debug keystore: every machine builds
+        // with its own auto-generated key, so the artifact installs anywhere,
+        // while upgrades on this machine keep the established signature.
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
 }
 
 dependencies {

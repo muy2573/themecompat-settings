@@ -13,10 +13,15 @@ HyperOS 3 的 LSPosed/libxposed 兼容模块：把适配 .mtz 主题的壁纸/�
 
 ## 构建
 
+要求：JDK 17、Android SDK（compileSdk 36 / buildTools 36.0.0）。
+
 ```
-gradlew assembleDebug
+gradlew assembleDebug      # 调试包
+gradlew assembleRelease    # 发布包（debug keystore 签名，可直接安装）
 ```
 
-产物：`app/build/outputs/apk/debug/app-debug.apk`，在 LSPosed 中启用并勾选作用域后重启对应应用生效。
+命令行构建需在 `local.properties` 写入 `sdk.dir=<SDK 路径>`，或设置 `ANDROID_HOME` 环境变量（该文件不入库）。
 
-`gradle.properties` 中的 `org.gradle.java.home` 指向本机 JDK 路径，其他机器构建时请自行修改。
+`org.gradle.java.home` 这类机器相关配置请放在用户级 `~/.gradle/gradle.properties`，不要提交到仓库。
+
+产物：`app/build/outputs/apk/{debug,release}/`，在 LSPosed 中启用并勾选作用域后重启对应应用生效。
