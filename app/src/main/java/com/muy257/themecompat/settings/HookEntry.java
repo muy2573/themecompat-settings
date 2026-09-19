@@ -77,7 +77,7 @@ public final class HookEntry extends XposedModule {
     private void installWhenApplicationReady(String packageName, ClassLoader loader) {
         Application current = currentApplication();
         if (current != null) {
-            installForTheme(packageName, loader, current);
+            installForTheme(packageName, loader);
             return;
         }
         try {
@@ -88,7 +88,7 @@ public final class HookEntry extends XposedModule {
                 Object[] args = chain.getArgs().toArray(new Object[0]);
                 Object result = chain.proceed(args);
                 if (args.length > 0 && args[0] instanceof Application) {
-                    installForTheme(packageName, loader, (Application) args[0]);
+                    installForTheme(packageName, loader);
                 }
                 return result;
             });
@@ -111,11 +111,11 @@ public final class HookEntry extends XposedModule {
         }
     }
 
-    private void installForTheme(String packageName, ClassLoader loader, Application application) {
+    private void installForTheme(String packageName, ClassLoader loader) {
         synchronized (INSTALLED_PACKAGES) {
             if (!INSTALLED_PACKAGES.add(packageName)) return;
         }
-        ThemeCompatibilityGate.Status theme = ThemeCompatibilityGate.inspect(application);
+        ThemeCompatibilityGate.Status theme = ThemeCompatibilityGate.inspect();
         log(android.util.Log.INFO, "HookEntry",
                 "theme " + packageName + " status=" + theme);
         if (theme == ThemeCompatibilityGate.Status.INCOMPATIBLE) {

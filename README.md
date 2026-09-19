@@ -38,11 +38,14 @@
 - 日历、短信验证码、联系人、录音机、相册、文件管理、安装器、安全中心、相机设置页和 SystemUI 控制中心立绘等专用 adapter。
 - `HookRegistry`：应用内展示的 Hook 说明及源码摘录，需与实际 adapter 同步更新。
 
-运行时采用三层门控：生成器在 `description.xml` 写入版本化的
-`[themecompat-settings:v1]` 标记；Hook 页的全局总开关必须由用户手动开启；目标应用的独立开关也必须开启。
+运行时采用三层门控：生成器在每个被重写的模块 ZIP 内写入 `themecompat.marker` 标记记录，
+主题引擎每次应用主题都会把模块 ZIP 原样落到 `/data/system/theme/<包名>`，运行时据此判定当前应用的主题是否为本模块生成
+（不能依赖 `description.xml`：它的 Settings.Secure 副本 "maml" 在切换到无 maml 组件的主题时不会刷新，会造成误识别）；
+Hook 页的全局总开关必须由用户手动开启；目标应用的独立开关也必须开启。
 LSPosed 远端配置不可读时按关闭处理，不再回退到编译默认值。当前主题明确缺少标记时不安装任何运行时适配；
-主题元数据无法读取时，只安装会先取得非纯色主题画布再清理宿主的 `SettingsSurfaceAdapter` 安全路径，
+应用目录或模块 ZIP 无法读取时，只安装会先取得非纯色主题画布再清理宿主的 `SettingsSurfaceAdapter` 安全路径，
 跳过卡片、Paint、Drawable 和遮罩修改。作者名仅用于人工识别，不作为启用凭据。
+v339 起门控读取载荷标记，因此旧版生成的适配包需用新版重新生成并应用后 Hook 才会启用。
 
 明确限制：
 

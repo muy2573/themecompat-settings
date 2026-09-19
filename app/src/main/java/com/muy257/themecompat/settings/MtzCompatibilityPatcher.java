@@ -441,6 +441,11 @@ final class MtzCompatibilityPatcher {
                     pathnameResult.normalizedPathnames, String.join("；", notes));
         }
 
+        // The runtime gate reads this record from the applied copy under
+        // /data/system/theme/<package>, so every rewritten module carries it.
+        additions.put(CompatibilityContract.PAYLOAD_MARKER_ENTRY,
+                CompatibilityContract.PAYLOAD_MARKER_CONTENT.getBytes(StandardCharsets.UTF_8));
+        notes.add("写入运行时适配标记 ×1");
         progress.update("正在重写：" + humanName(moduleName)
                 + "（新增 " + additions.size() + "，替换 " + replacements.size()
                 + "，移除 " + removals.size() + "）…");

@@ -649,7 +649,7 @@ public final class MainActivity extends Activity {
     }
 
     private String themeGateSummary() {
-        ThemeCompatibilityGate.Status state = ThemeCompatibilityGate.inspect(this);
+        ThemeCompatibilityGate.Status state = ThemeCompatibilityGate.inspect();
         if (state == ThemeCompatibilityGate.Status.COMPATIBLE) {
             return "已识别由本模块生成并应用的适配主题";
         }
