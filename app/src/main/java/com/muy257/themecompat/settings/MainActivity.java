@@ -657,6 +657,14 @@ public final class MainActivity extends Activity {
         helpCard.addView(Ui.row(this, R.drawable.ic_more, "作用域", null, true,
                 view -> startActivity(textPage("作用域", null,
                         new String[]{ThemeCompatApplication.scopeSummary()}))));
+        helpCard.addView(Ui.separator(this, 51));
+        helpCard.addView(Ui.row(this, R.drawable.ic_info, "版本信息",
+                versionDisplay(), true,
+                view -> startActivity(textPage("版本信息",
+                        new String[]{"当前版本", "项目"},
+                        new String[]{"ThemeCompat Settings " + versionDisplay(),
+                                "GitHub：github.com/muy2573/themecompat-settings\n"
+                                        + "最终验收：HyperOS 3 / Redmi K70 Ultra"}))));
         page.addView(helpCard, Ui.cardParams(this));
         scroll.addView(page);
         return scroll;
@@ -667,6 +675,16 @@ public final class MainActivity extends Activity {
                 .putExtra("title", title)
                 .putExtra("heads", heads)
                 .putExtra("bodies", bodies);
+    }
+
+    private String versionDisplay() {
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(
+                    getPackageName(), android.content.pm.PackageManager.PackageInfoFlags.of(0));
+            return "v" + info.versionName + "（" + info.getLongVersionCode() + "）";
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+            return "版本信息不可用";
+        }
     }
 
     private static final String USAGE_STEPS =

@@ -72,6 +72,16 @@ public final class HookEntry extends XposedModule {
             return;
         }
 
+        // Camera has a self-contained, exact Activity adapter and must not be
+        // gated by initialization of unrelated generic card/page adapters.
+        // Route it first so a vendor class failure elsewhere cannot silently
+        // prevent CameraPreferenceActivity lifecycle hooks from installing.
+        if (CAMERA_PACKAGE.equals(packageName)) {
+            log(android.util.Log.INFO, "HookEntry", "installing CameraSurface adapter");
+            new CameraSurfaceAdapter(this).install();
+            return;
+        }
+
         if (BusinessCardSurfaceAdapter.supports(packageName)) {
             new BusinessCardSurfaceAdapter(this, packageName).install();
         }
@@ -136,10 +146,6 @@ public final class HookEntry extends XposedModule {
         if (HOME_PACKAGE.equals(packageName)) {
             new SettingsSurfaceAdapter(this, param.getDefaultClassLoader()).install();
             new PreferenceCardPaintAdapter(this, param.getDefaultClassLoader(), packageName).install();
-            return;
-        }
-        if (CAMERA_PACKAGE.equals(packageName)) {
-            new CameraSurfaceAdapter(this).install();
             return;
         }
         if (CALENDAR_PACKAGE.equals(packageName)) {

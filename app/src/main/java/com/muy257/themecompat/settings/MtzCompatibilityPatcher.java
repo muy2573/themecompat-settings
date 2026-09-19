@@ -43,6 +43,10 @@ final class MtzCompatibilityPatcher {
     private static final int BUFFER_SIZE = 32 * 1024;
     private static final long MAX_MODULE_BYTES = 64L * 1024L * 1024L;
     private static final long MAX_XML_BYTES = 2L * 1024L * 1024L;
+    private static final long MAX_IMAGE_BYTES = 32L * 1024L * 1024L;
+    private static final long MAX_TRACKED_RESOURCE_BYTES = 64L * 1024L * 1024L;
+    private static final int MAX_OUTER_ENTRIES = 4096;
+    private static final int MAX_MODULE_ENTRIES = 10000;
     private static final String DESCRIPTION = "description.xml";
     private static final String SETTINGS_MODULE = "com.android.settings";
     private static final String FILE_EXPLORER_MODULE = "com.android.fileexplorer";
@@ -85,6 +89,7 @@ final class MtzCompatibilityPatcher {
             "com.android.deskclock", "com.android.fileexplorer", "com.android.contacts",
             "com.android.mms", "com.android.soundrecorder", "com.miui.gallery",
             "com.miui.packageinstaller", THEME_MANAGER_MODULE, MIPAY_MODULE,
+            SECURITY_CENTER_MODULE,
             /*
              * Dark-mode audit additions: these modules display the themed
              * light wallpaper but ship no night canvas of their own.  Each
@@ -185,6 +190,9 @@ final class MtzCompatibilityPatcher {
             ZipEntry entry;
             while ((entry = input.getNextEntry()) != null) {
                 outerEntries++;
+                if (outerEntries > MAX_OUTER_ENTRIES) {
+                    throw new IOException("主题外层 ZIP 条目过多（上限 " + MAX_OUTER_ENTRIES + "）");
+                }
                 String name = entry.getName();
                 if (!isSafeEntryName(name)) throw new IOException("主题包含不安全 ZIP 路径：" + name);
                 if (DESCRIPTION.equals(name)) {
@@ -200,13 +208,12 @@ final class MtzCompatibilityPatcher {
                     ModulePatch patch = patchModule(name, original, external, progress,
                             a11yLight, a11yDark);
                     writeEntry(output, entry, patch.bytes);
-                    if (patch.additions > 0 || patch.fallbacks > 0 || patch.removals > 0) {
+                    if (patch.additions > 0 || patch.replacements > 0 || patch.fallbacks > 0
+                            || patch.removals > 0
+                            || patch.normalizedPathnames > 0) {
                         String line = humanName(name) + "：" + patch.detail;
                         changes.add(line);
                         progress.update("完成：" + line);
-                    } else if (patch.duplicateEntries > 0) {
-                        progress.update("完成：" + humanName(name)
-                                + "（仅忽略 " + patch.duplicateEntries + " 条重复条目，无资源改动）");
                     }
                 } else {
                     copyEntry(input, output, entry);
@@ -263,7 +270,7 @@ final class MtzCompatibilityPatcher {
             ZipEntry entry;
             while ((entry = input.getNextEntry()) != null) {
                 if (wanted.equals(entry.getName())) {
-                    return readAll(input, MAX_MODULE_BYTES);
+                    return readAll(input, MAX_IMAGE_BYTES);
                 }
                 input.closeEntry();
             }
@@ -319,9 +326,16 @@ final class MtzCompatibilityPatcher {
                                            ExternalDonors external, Progress progress,
                                            byte[] a11yLight, byte[] a11yDark) throws IOException {
         if (!isZip(original)) throw new IOException(moduleName + " 不是有效的主题模块 ZIP");
+        ZipPathnameNormalizer.Result pathnameResult = ZipPathnameNormalizer.normalize(original);
+        original = pathnameResult.bytes;
         ModuleSnapshot snapshot = readSnapshot(original);
         LinkedHashMap<String, byte[]> additions = new LinkedHashMap<>();
         List<String> notes = new ArrayList<>();
+        if (pathnameResult.normalizedPathnames > 0) {
+            notes.add("规范化旧式 ZIP 路径 ×" + pathnameResult.normalizedPathnames
+                    + (pathnameResult.legacyFallbacks > 0
+                    ? "（其中编码回退 ×" + pathnameResult.legacyFallbacks + "）" : ""));
+        }
         if (SETTINGS_MODULE.equals(moduleName)) {
             repairSettingsAccessibilityIcon(snapshot, additions, notes, a11yLight, a11yDark);
         }
@@ -418,54 +432,38 @@ final class MtzCompatibilityPatcher {
             fallbacks += lightRoutes + darkRoutes;
         }
         if (additions.isEmpty() && replacements.isEmpty() && removals.isEmpty()) {
-            progress.update("跳过：" + humanName(moduleName) + "（所需资源已齐全）");
-            return new ModulePatch(original, 0, 0, 0, 0, "");
+            if (pathnameResult.normalizedPathnames == 0) {
+                progress.update("跳过：" + humanName(moduleName) + "（所需资源及路径编码已齐全）");
+            } else {
+                progress.update("完成：" + humanName(moduleName) + "（仅规范化 ZIP 路径，不改资源）");
+            }
+            return new ModulePatch(original, 0, 0, 0, 0,
+                    pathnameResult.normalizedPathnames, String.join("；", notes));
         }
 
         progress.update("正在重写：" + humanName(moduleName)
                 + "（新增 " + additions.size() + "，替换 " + replacements.size()
                 + "，移除 " + removals.size() + "）…");
-        ByteArrayOutputStream built = new ByteArrayOutputStream(original.length + additions.size() * 1024);
-        int duplicateEntries = 0;
-        try (ZipInputStream input = new ZipInputStream(new ByteArrayInputStream(original));
-             ZipOutputStream output = new ZipOutputStream(built)) {
-            Set<String> writtenNames = new HashSet<>();
-            ZipEntry entry;
-            while ((entry = input.getNextEntry()) != null) {
-                // Some author-made MTZ modules contain duplicate central-directory
-                // entries. Android's theme lookup takes the first matching entry,
-                // while ZipOutputStream rejects duplicate output names outright.
-                // Preserve that first entry and make the resulting inner ZIP valid.
-                if (!writtenNames.add(entry.getName())) {
-                    drain(input);
-                    duplicateEntries++;
-                    input.closeEntry();
-                    continue;
-                }
-                if (removals.contains(entry.getName())) {
-                    drain(input);
-                    input.closeEntry();
-                    continue;
-                }
-                byte[] replacement = replacements.get(entry.getName());
-                if (replacement != null) {
-                    drain(input);
-                    writeEntry(output, entry, replacement);
-                } else {
-                    copyEntry(input, output, entry);
-                }
-                input.closeEntry();
-            }
-            for (Map.Entry<String, byte[]> addition : additions.entrySet()) {
-                if (!writtenNames.add(addition.getKey())) continue;
-                ZipEntry additionEntry = new ZipEntry(addition.getKey());
-                writeEntry(output, additionEntry, addition.getValue());
-            }
-        }
-        List<String> summaryNotes = new ArrayList<>(notes);
-        if (duplicateEntries > 0) summaryNotes.add("忽略重复条目 ×" + duplicateEntries);
-        return new ModulePatch(built.toByteArray(), additions.size(), fallbacks, removals.size(),
-                duplicateEntries, String.join("；", summaryNotes));
+        // The editor only needs the selected edit payloads. Release the scan index (which may
+        // contain decoded PNGs) before allocating the rebuilt archive to keep peak heap lower.
+        snapshot.release();
+        snapshot = null;
+        RawZipArchiveEditor.Result edited = RawZipArchiveEditor.edit(
+                original, additions, replacements, removals);
+        notes.add("ZIP记录级写入：新增 " + edited.additions + "，替换 "
+                + edited.replacements + "，移除 " + edited.removals
+                + "（其余条目压缩数据与元数据保持原样）");
+        return new ModulePatch(edited.bytes, edited.additions, edited.replacements,
+                fallbacks, edited.removals, pathnameResult.normalizedPathnames,
+                String.join("；", notes));
+    }
+
+    /** Package-local regression entry point; production generation uses {@link #patch}. */
+    static byte[] patchModuleForTest(String moduleName, byte[] original,
+                                     byte[] settingsModule) throws IOException {
+        ExternalDonors external = new ExternalDonors();
+        if (settingsModule != null) external.global.merge(readSnapshot(settingsModule).donors);
+        return patchModule(moduleName, original, external, ignored -> { }, null, null).bytes;
     }
 
     /**
@@ -978,23 +976,40 @@ final class MtzCompatibilityPatcher {
 
     private static ModuleSnapshot readSnapshot(byte[] module) throws IOException {
         ModuleSnapshot snapshot = new ModuleSnapshot();
+        int entryCount = 0;
+        long trackedBytes = 0;
         try (ZipInputStream input = new ZipInputStream(new ByteArrayInputStream(module))) {
             ZipEntry entry;
             while ((entry = input.getNextEntry()) != null) {
+                entryCount++;
+                if (entryCount > MAX_MODULE_ENTRIES) {
+                    throw new IOException("主题模块 ZIP 条目过多（上限 " + MAX_MODULE_ENTRIES + "）");
+                }
                 String name = entry.getName();
                 if (!isSafeEntryName(name)) throw new IOException("模块包含不安全 ZIP 路径：" + name);
                 if (!entry.isDirectory()) snapshot.names.add(name);
+                byte[] tracked = null;
                 if (isDonorCandidate(name)) {
-                    byte[] bytes = readAll(input, MAX_MODULE_BYTES);
-                    snapshot.donors.consider(name, bytes);
-                    if (isSmallTrackedFile(name)) snapshot.smallFiles.put(name, bytes);
+                    tracked = readAll(input, MAX_IMAGE_BYTES);
+                    snapshot.donors.consider(name, tracked);
                 } else if (isSmallTrackedFile(name)) {
-                    snapshot.smallFiles.put(name, readAll(input, MAX_XML_BYTES));
+                    tracked = readAll(input, trackedResourceLimit(name));
+                }
+                if (tracked != null) {
+                    trackedBytes += tracked.length;
+                    if (trackedBytes > MAX_TRACKED_RESOURCE_BYTES) {
+                        throw new IOException("模块需扫描的图片/XML 解压后总量过大（上限 64 MiB）");
+                    }
+                    if (isSmallTrackedFile(name)) snapshot.smallFiles.put(name, tracked);
                 }
                 input.closeEntry();
             }
         }
         return snapshot;
+    }
+
+    private static long trackedResourceLimit(String name) {
+        return name.endsWith(".xml") ? MAX_XML_BYTES : MAX_IMAGE_BYTES;
     }
 
     private static boolean isSmallTrackedFile(String name) {
@@ -1147,7 +1162,8 @@ final class MtzCompatibilityPatcher {
         } else {
             report.append("实际修改：\n");
             for (String change : changes) report.append("• ").append(change).append('\n');
-            report.append("\n现有素材均未覆盖，新增别名均来自所选主题自身。");
+            report.append("\n仅报告列出的路径发生新增、替换或移除；其余条目的压缩数据与 ZIP 元数据保持原样。")
+                    .append("图片别名均来自所选主题本身或报告注明的同主题模块借图。");
         }
         return report.toString();
     }
@@ -1165,6 +1181,7 @@ final class MtzCompatibilityPatcher {
         if ("com.miui.packageinstaller".equals(module)) return "安装器";
         if (THEME_MANAGER_MODULE.equals(module)) return "主题商店";
         if (MIPAY_MODULE.equals(module)) return "小米钱包";
+        if (SECURITY_CENTER_MODULE.equals(module)) return "安全中心";
         if (COMPASS_MODULE.equals(module)) return "指南针";
         if (NOTIFICATION_MODULE.equals(module)) return "通知";
         if (AIASST_SERVICE_MODULE.equals(module)) return "AI通话";
@@ -1176,18 +1193,20 @@ final class MtzCompatibilityPatcher {
     private static final class ModulePatch {
         final byte[] bytes;
         final int additions;
+        final int replacements;
         final int fallbacks;
         final int removals;
-        final int duplicateEntries;
+        final int normalizedPathnames;
         final String detail;
 
-        ModulePatch(byte[] bytes, int additions, int fallbacks, int removals, int duplicateEntries,
-                    String detail) {
+        ModulePatch(byte[] bytes, int additions, int replacements, int fallbacks, int removals,
+                    int normalizedPathnames, String detail) {
             this.bytes = bytes;
             this.additions = additions;
+            this.replacements = replacements;
             this.fallbacks = fallbacks;
             this.removals = removals;
-            this.duplicateEntries = duplicateEntries;
+            this.normalizedPathnames = normalizedPathnames;
             this.detail = detail;
         }
     }
@@ -1196,6 +1215,13 @@ final class MtzCompatibilityPatcher {
         final Set<String> names = new HashSet<>();
         final Map<String, byte[]> smallFiles = new HashMap<>();
         final Donors donors = new Donors();
+
+        void release() {
+            names.clear();
+            smallFiles.clear();
+            donors.light = null;
+            donors.dark = null;
+        }
     }
 
     /** Settings global donors plus the audited cross-module night canvases. */

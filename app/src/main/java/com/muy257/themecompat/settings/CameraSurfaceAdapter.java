@@ -3,11 +3,7 @@ package com.muy257.themecompat.settings;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.res.Configuration;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
@@ -18,8 +14,6 @@ import android.view.ViewParent;
 import android.view.ViewTreeObserver;
 
 import java.lang.reflect.Method;
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Map;
@@ -36,11 +30,8 @@ import io.github.libxposed.api.XposedModule;
  */
 final class CameraSurfaceAdapter {
     private static final String CAMERA_PACKAGE = "com.android.camera";
-    private static final String MIUI_RESOURCE_PACKAGE = "miui";
     private static final String PREFERENCE_ACTIVITY =
             "com.android.camera.CameraPreferenceActivity";
-    private static final String HYPER_CELL_LAYOUT =
-            "miuix.flexible.view.HyperCellLayout";
     private static final String ACTION_BAR_OVERLAY_LAYOUT =
             "miuix.appcompat.internal.app.widget.ActionBarOverlayLayout";
     private static final long RESCAN_WINDOW_MS = 2500L;
@@ -81,6 +72,7 @@ final class CameraSurfaceAdapter {
                 (receiver, args) -> {
                     if (receiver instanceof Activity) schedule((Activity) receiver);
                 });
+        module.log(Log.INFO, "CameraSurface", "Installed CameraPreferenceActivity lifecycle hooks");
     }
 
     private void schedule(Activity activity) {
@@ -98,18 +90,15 @@ final class CameraSurfaceAdapter {
             release(activity);
             return;
         }
-        // Window focus is already granted on the restored-page path.  Apply once
-        // synchronously instead of depending solely on this build's deferred queue.
         apply(activity);
-        // The Camera preference hierarchy is expanded after the Activity's first layout.
         decor.post(() -> apply(activity));
         decor.postDelayed(() -> apply(activity), 280L);
         decor.postDelayed(() -> apply(activity), 900L);
-        decor.postDelayed(() -> apply(activity), 1500L);
+        decor.postDelayed(() -> apply(activity), 1_500L);
         decor.postDelayed(() -> {
             apply(activity);
             release(activity);
-        }, 2300L);
+        }, 2_300L);
     }
 
     private void release(Activity activity) {
@@ -141,7 +130,6 @@ final class CameraSurfaceAdapter {
             session = new Session(module, activity, (ViewGroup) content);
             sessions.put(activity, session);
         }
-        session.applyActiveThemeBackground();
         session.rearmRescan();
         boolean night = (activity.getResources().getConfiguration().uiMode
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
@@ -198,7 +186,6 @@ final class CameraSurfaceAdapter {
         private final Set<View> diagnosed = Collections.newSetFromMap(new IdentityHashMap<>());
         private ViewTreeObserver.OnGlobalLayoutListener listener;
         private long rescanDeadline;
-        private int appliedWindowNightMode = -1;
 
         Session(XposedModule module, Activity activity, ViewGroup root) {
             this.module = module;
@@ -209,106 +196,6 @@ final class CameraSurfaceAdapter {
 
         int clearOpaqueCardGroupDecorations() {
             return clearCardDecorations(root, 0);
-        }
-
-        void applyActiveThemeBackground() {
-            boolean night = (activity.getResources().getConfiguration().uiMode
-                    & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-            int requestedMode = night ? 1 : 0;
-            if (appliedWindowNightMode == requestedMode) return;
-            Drawable background = RootThemeBackgroundLoader.load(activity, night, module);
-            if (background == null) return;
-            View decor = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
-            if (decor == null) return;
-            // Decorating the already-created view does not overwrite PhoneWindow's
-            // theme state, unlike Window#setBackgroundDrawable().
-            decor.setBackground(background);
-            appliedWindowNightMode = requestedMode;
-            module.log(Log.INFO, "CameraSurface", "Applied current theme image to Camera decor mode="
-                    + (night ? "dark" : "light"));
-        }
-
-        void rebindWindowBackgroundForCurrentMode() {
-            boolean night = (activity.getResources().getConfiguration().uiMode
-                    & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-            int requestedMode = night ? 1 : 0;
-            if (appliedWindowNightMode == requestedMode || activity.getWindow() == null) return;
-            // The original module's theme_fallback.xml maps MIUI's dark settings
-            // drawable to its window_bg_dark asset.  window_bg_dark itself is *not*
-            // an APK resource, so resolving it in com.android.camera can never work.
-            String resourceName = night
-                    ? "miuix_appcompat_settings_window_bg_dark"
-                    : "miuix_appcompat_window_bg_light";
-            String themePath = night
-                    ? "res/window_bg_dark.9.png"
-                    : "res/drawable-xxhdpi/miuix_appcompat_window_bg_light.9.png";
-            int resourceId = activity.getResources().getIdentifier(resourceName, "drawable",
-                    MIUI_RESOURCE_PACKAGE);
-            if (resourceId == 0) {
-                module.log(Log.WARN, "CameraSurface", "Missing MIUI window resource=" + resourceName);
-                return;
-            }
-            try {
-                // Resources#getDrawable keeps the app's pre-switch ColorDrawable in
-                // its drawable cache on this build.  GetThemeStream is the framework
-                // API that ThemeResources itself uses to open the active theme ZIP;
-                // it is therefore theme-dynamic and contains no bundled image data.
-                Drawable background = loadCurrentThemeWindowBackground(themePath, night);
-                String source = "theme-stream";
-                if (background == null) {
-                    background = activity.getResources().getDrawable(resourceId, activity.getTheme());
-                    source = "resources-fallback";
-                }
-                activity.getWindow().setBackgroundDrawable(background);
-                appliedWindowNightMode = requestedMode;
-                module.log(Log.INFO, "CameraSurface", "Rebound Camera window background="
-                        + MIUI_RESOURCE_PACKAGE + ':' + resourceName + " themePath=" + themePath
-                        + " source=" + source + " drawable="
-                        + background.getClass().getName());
-            } catch (Throwable error) {
-                module.log(Log.WARN, "CameraSurface", "Cannot rebind Camera window background="
-                        + resourceName, error);
-            }
-        }
-
-        private Drawable loadCurrentThemeWindowBackground(String themePath, boolean night)
-                throws Exception {
-            // The Activity exposes a Resources wrapper rather than MiuiResources.
-            // The bridge therefore retains the exact ThemeResourcesPackage receiver
-            // the framework used while resolving Camera's own themed drawables.
-            Object themeResources = CameraThemeResourceBridge.get();
-            if (themeResources == null) {
-                module.log(Log.WARN, "CameraSurface",
-                        "No live Camera ThemeResourcesPackage captured; leaving framework drawable intact");
-                return null;
-            }
-            findMethod(themeResources.getClass(), "setNightModeEnable", Boolean.TYPE)
-                    .invoke(themeResources, night);
-            Method streamMethod = findMethod(themeResources.getClass(), "getThemeStream",
-                    String.class, long[].class);
-            Object candidate = streamMethod.invoke(themeResources,
-                    themePath, new long[1]);
-            if (!(candidate instanceof InputStream)) return null;
-            try (InputStream stream = (InputStream) candidate) {
-                Bitmap bitmap = BitmapFactory.decodeStream(stream);
-                return bitmap == null ? null : new BitmapDrawable(activity.getResources(), bitmap);
-            }
-        }
-
-        private Object findFieldValue(Object receiver, String name) throws NoSuchFieldException,
-                IllegalAccessException {
-            if (receiver == null) return null;
-            for (Class<?> cursor = receiver.getClass(); cursor != null;
-                    cursor = cursor.getSuperclass()) {
-                try {
-                    java.lang.reflect.Field field = cursor.getDeclaredField(name);
-                    field.setAccessible(true);
-                    return field.get(receiver);
-                } catch (NoSuchFieldException ignored) {
-                    // Continue through the runtime class hierarchy.
-                }
-            }
-            throw new NoSuchFieldException(receiver.getClass().getName() + '#' + name);
         }
 
         int clearPreferencePageBackgrounds() {
@@ -483,81 +370,6 @@ final class CameraSurfaceAdapter {
             else rescanDeadline = android.os.SystemClock.uptimeMillis() + RESCAN_WINDOW_MS;
         }
 
-        private void walk(View view, int[] changed, int depth) {
-            if (view == null || view.getVisibility() != View.VISIBLE || depth > 16) return;
-            // Camera's own runtime trace identifies these as the opaque card hosts.
-            // Buttons, tabs and arbitrary Miuix containers are deliberately untouched.
-            if (HYPER_CELL_LAYOUT.equals(view.getClass().getName())) {
-                Drawable background = view.getBackground();
-                Integer color = sampleSurfaceColor(background, view.getWidth(), view.getHeight());
-                boolean opaqueNeutral = isOpaqueNeutral(color);
-                if (diagnosed.add(view)) {
-                    module.log(Log.INFO, "CameraSurface", "HyperCell frame=" + view.getWidth() + 'x'
-                            + view.getHeight() + " bg=" + describe(background) + " sample="
-                            + describeColor(color) + " opaqueNeutral=" + opaqueNeutral);
-                }
-                if (opaqueNeutral) {
-                    if (!originals.containsKey(view)) originals.put(view, background);
-                    view.setBackground(new ColorDrawable(Color.TRANSPARENT));
-                    changed[0]++;
-                }
-            }
-            if (view instanceof ViewGroup) {
-                ViewGroup group = (ViewGroup) view;
-                for (int i = 0; i < group.getChildCount(); i++) {
-                    walk(group.getChildAt(i), changed, depth + 1);
-                }
-            }
-        }
-
-        private Integer sampleSurfaceColor(Drawable background, int width, int height) {
-            if (background == null) return null;
-            if (background instanceof ColorDrawable) {
-                return ((ColorDrawable) background).getColor();
-            } else {
-                try {
-                    Drawable.ConstantState state = background.getConstantState();
-                    if (state == null) return null;
-                    Drawable copy = state.newDrawable().mutate();
-                    // State-list and layered Miuix card drawables can be transparent in
-                    // their default state.  Preserve the live View background state and
-                    // draw at its real bounds; an arbitrary 8x8 copy is not equivalent.
-                    copy.setState(background.getState());
-                    copy.setLevel(background.getLevel());
-                    int drawWidth = Math.max(1, width);
-                    int drawHeight = Math.max(1, height);
-                    Bitmap bitmap = Bitmap.createBitmap(drawWidth, drawHeight, Bitmap.Config.ARGB_8888);
-                    Canvas canvas = new Canvas(bitmap);
-                    copy.setBounds(0, 0, drawWidth, drawHeight);
-                    copy.draw(canvas);
-                    int color = bitmap.getPixel(drawWidth / 2, drawHeight / 2);
-                    bitmap.recycle();
-                    return color;
-                } catch (Throwable ignored) {
-                    return null;
-                }
-            }
-        }
-
-        private boolean isOpaqueNeutral(Integer color) {
-            if (color == null) return false;
-            if (Color.alpha(color) != 255) return false;
-            int red = Color.red(color);
-            int green = Color.green(color);
-            int blue = Color.blue(color);
-            return Math.max(red, Math.max(green, blue)) - Math.min(red, Math.min(green, blue)) <= 24;
-        }
-
-        private String describe(Drawable background) {
-            if (background == null) return "null";
-            return background.getClass().getName() + " opacity=" + background.getOpacity()
-                    + " constant=" + (background.getConstantState() != null);
-        }
-
-        private String describeColor(Integer color) {
-            return color == null ? "null" : String.format("#%08X", color);
-        }
-
         private void installRescan() {
             try {
                 ViewTreeObserver observer = root.getViewTreeObserver();
@@ -590,7 +402,8 @@ final class CameraSurfaceAdapter {
             for (DecorationState state : decorationOriginals.values()) {
                 try {
                     state.field.set(state.decoration, state.original);
-                    Method invalidate = state.recycler.getClass().getMethod("invalidateItemDecorations");
+                    Method invalidate = findMethod(state.recycler.getClass(),
+                            "invalidateItemDecorations");
                     invalidate.invoke(state.recycler);
                 } catch (Throwable ignored) {
                     // The recycler can already be detached during Activity teardown.
@@ -629,66 +442,4 @@ final class CameraSurfaceAdapter {
         }
     }
 
-    /**
-     * Captures, but never alters, the concrete framework resource wrapper used by
-     * the Camera process.  The wrapper is not obtainable from Activity#getResources
-     * on this HyperOS build; intercepting its existing resource lookup is the same
-     * path the framework itself takes and avoids any guessed ZIP location.
-     */
-    private static final class CameraThemeResourceBridge {
-        private static volatile WeakReference<Object> active = new WeakReference<>(null);
-        private static volatile boolean installed;
-
-        static void install(XposedModule module) {
-            if (installed) return;
-            synchronized (CameraThemeResourceBridge.class) {
-                if (installed) return;
-                try {
-                    Class<?> resourcePackage = Class.forName(
-                            "miui.content.res.ThemeResourcesPackage", false, null);
-                    int hooks = 0;
-                    for (Method method : resourcePackage.getDeclaredMethods()) {
-                        if (!"getThemeFile".equals(method.getName())
-                                || method.getParameterTypes().length == 0) continue;
-                        method.setAccessible(true);
-                        module.hook(method).intercept(chain -> {
-                            Object receiver = chain.getThisObject();
-                            if (CAMERA_PACKAGE.equals(readField(receiver, "mPackageName"))) {
-                                active = new WeakReference<>(receiver);
-                            }
-                            return chain.proceed(chain.getArgs().toArray(new Object[0]));
-                        });
-                        hooks++;
-                    }
-                    installed = true;
-                    module.log(Log.INFO, "CameraSurface",
-                            "Installed live Camera ThemeResourcesPackage bridge methods=" + hooks);
-                } catch (Throwable error) {
-                    module.log(Log.ERROR, "CameraSurface",
-                            "Cannot install Camera ThemeResourcesPackage bridge", error);
-                }
-            }
-        }
-
-        static Object get() {
-            WeakReference<Object> current = active;
-            return current == null ? null : current.get();
-        }
-
-        private static Object readField(Object receiver, String name) {
-            for (Class<?> cursor = receiver == null ? null : receiver.getClass(); cursor != null;
-                    cursor = cursor.getSuperclass()) {
-                try {
-                    java.lang.reflect.Field field = cursor.getDeclaredField(name);
-                    field.setAccessible(true);
-                    return field.get(receiver);
-                } catch (NoSuchFieldException ignored) {
-                    // Continue through the framework wrapper hierarchy.
-                } catch (Throwable ignored) {
-                    return null;
-                }
-            }
-            return null;
-        }
-    }
 }

@@ -22,7 +22,7 @@ import java.util.Set;
 import io.github.libxposed.api.XposedModule;
 
 /**
- * Exact card-surface adjustment for the final three standalone pages.
+ * Exact account-card surface adjustment.
  *
  * The first direct test proved the CardStateDrawable foreground in Mi Share,
  * Cloud and Account is an interaction-only layer: alpha changes have no
@@ -32,10 +32,8 @@ import io.github.libxposed.api.XposedModule;
  * distinct service card is deliberately excluded.
  */
 final class BusinessCardSurfaceAdapter {
-    private static final int LIGHT_ALPHA = 0x48;
     private static final Set<String> TARGETS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "com.miui.mishare.connectivity",
-            "com.miui.cloudservice",
             "com.xiaomi.account"
     )));
 
@@ -136,6 +134,7 @@ final class BusinessCardSurfaceAdapter {
         if (view == null || view.getVisibility() != View.VISIBLE) return;
         boolean night = isNight(activity);
         if ("com.xiaomi.account".equals(targetPackage) && isSmallAccountServiceCard(view)) {
+            applyAlpha(view.getBackground(), night, changed, restored);
             applyWhiteDescendantBackgrounds(view, night, changed, restored);
             // Child drawables have been examined separately. Continue walking
             // to reach later preference rows outside this service-card view.
@@ -190,17 +189,21 @@ final class BusinessCardSurfaceAdapter {
         if ("com.miui.mishare.connectivity".equals(targetPackage)) {
             return name.equals("com.miui.mishare.activity.MiShareSettingsActivity");
         }
-        if ("com.miui.cloudservice".equals(targetPackage)) {
-            return name.equals("com.miui.cloudservice.ui.MiCloudMainActivity");
-        }
         return name.equals("com.xiaomi.account.ui.AccountSettingsActivity");
     }
 
     private static boolean isOpaqueNeutralGradient(Drawable drawable) {
-        if (!(drawable instanceof GradientDrawable) || drawable.getAlpha() != 255) return false;
-        android.content.res.ColorStateList colors = ((GradientDrawable) drawable).getColor();
-        if (colors == null) return false;
-        int color = colors.getDefaultColor();
+        if (drawable == null || drawable.getAlpha() != 255) return false;
+        int color;
+        if (drawable instanceof GradientDrawable) {
+            android.content.res.ColorStateList colors = ((GradientDrawable) drawable).getColor();
+            if (colors == null) return false;
+            color = colors.getDefaultColor();
+        } else if (drawable instanceof android.graphics.drawable.ColorDrawable) {
+            color = ((android.graphics.drawable.ColorDrawable) drawable).getColor();
+        } else {
+            return false;
+        }
         if (Color.alpha(color) != 255) return false;
         int min = Math.min(Color.red(color), Math.min(Color.green(color), Color.blue(color)));
         int max = Math.max(Color.red(color), Math.max(Color.green(color), Color.blue(color)));

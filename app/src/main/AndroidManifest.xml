@@ -49,8 +49,5 @@
         <activity
             android:name=".settings.RestartScopeActivity"
             android:exported="false" />
-        <receiver
-            android:name=".settings.RootThemeExtractorReceiver"
-            android:exported="true" />
     </application>
 </manifest>

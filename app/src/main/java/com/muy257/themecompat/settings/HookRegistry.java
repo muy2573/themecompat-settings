@@ -116,11 +116,9 @@ final class HookRegistry {
                 new HookItem("页面背景接管",
                         "SettingsSurfaceAdapter：MiCloudMainActivity 挂主题背景、清理纯色宿主",
                         SRC_SETTINGS_SURFACE),
-                new HookItem("小卡片背景",
-                        "BusinessCardSurfaceAdapter：ServiceSmallCardView 背景浅色 alpha 化",
-                        SRC_BUSINESS_CARDS),
                 new HookItem("混淆卡片绘制器",
-                        "hook 混淆 ItemDecoration 基类 o6.a 的 onDraw，卡片 Paint 走透明度",
+                        "ObfuscatedCardDecorationAdapter：同时 hook h6.l$c 与 l6.f，"
+                                + "修改绘制器实际读取的 ColorDrawable 颜色 alpha",
                         SRC_OBFUSCATED_DECORATION))));
         apps.add(new HookApp("小米账号", "com.xiaomi.account", listOf(
                 new HookItem("小卡片背景",
@@ -128,7 +126,7 @@ final class HookRegistry {
                                 + "特意区分的大服务卡保留原样",
                         SRC_BUSINESS_CARDS),
                 new HookItem("混淆卡片绘制器",
-                        "hook 混淆装饰器基类 wb.a 的 onDraw，卡片 Paint 走透明度",
+                        "结构匹配 miuix.preference.m$e/旧版 wb.a 的绘制方法与卡片 Paint",
                         SRC_OBFUSCATED_DECORATION),
                 new HookItem("页面背景接管",
                         "SettingsSurfaceAdapter：账号设置页白名单挂主题背景、清理纯色宿主",
@@ -184,8 +182,9 @@ final class HookRegistry {
                         SRC_CAMERA_KEEP),
                 new HookItem("相机设置页清理",
                         "CameraSurfaceAdapter：CameraPreferenceActivity 保留主题窗口画布，"
-                                + "清理其上不透明 preference 宿主",
-                        SRC_SETTINGS_SURFACE))));
+                                + "清理其上不透明 preference 宿主；仅首次进入有效，"
+                                + "运行中明暗切换暂未适配",
+                        SRC_CAMERA_SETTINGS))));
         apps.add(new HookApp("应用安装器", "com.miui.packageinstaller", listOf(
                 new HookItem("页面背景接管",
                         "安装器页面画布与遮罩处理",
@@ -217,8 +216,9 @@ final class HookRegistry {
                         "SettingsSurfaceAdapter：设置/管家类页面白名单挂主题背景、清理纯色宿主",
                         SRC_SETTINGS_SURFACE),
                 new HookItem("卡片表面",
-                        "SecurityCenterCardSurfaceAdapter 页面与卡片处理",
-                        SRC_SETTINGS_SURFACE))));
+                        "SecurityCenterCardSurfaceAdapter：隐私页、应用详情与管家卡片仅在浅色模式降 alpha；"
+                                + "深色保持系统原生状态",
+                        SRC_SECURITY_CARDS))));
         apps.add(new HookApp("省电策略", "com.miui.powerkeeper", listOf(
                 new HookItem("页面背景接管",
                         "全部活动页挂主题背景、清理纯色宿主",
@@ -438,6 +438,27 @@ final class HookRegistry {
     private static final String SRC_CAMERA_KEEP = join(
             "// 现场验证：相机拍摄页在壁纸上自绘全幅黑底画布，属于原作者设计。",
             "// 按机主决定保持，不做运行时强改。");
+
+    private static final String SRC_CAMERA_SETTINGS = join(
+            "private boolean isTarget(Activity activity) {",
+            INDENT + "return activity != null && \"com.android.camera\".equals(activity.getPackageName())",
+            INDENT + INDENT + "&& \"com.android.camera.CameraPreferenceActivity\"",
+            INDENT + INDENT + INDENT + ".equals(activity.getClass().getName());",
+            "}",
+            "",
+            "// 只清 MIUIX 写入的页面底和 PreferenceFragment$c 卡片装饰；停止时还原。",
+            "overlay.setBackground(new ColorDrawable(Color.TRANSPARENT));",
+            "backgroundField.set(decoration, null);",
+            "// onConfigurationChanged 会重新扫描，但运行中主题画布不重新提取。" );
+
+    private static final String SRC_SECURITY_CARDS = join(
+            "// 仅已确认页面，且仅浅色模式：",
+            "if (isNight(context) || !isConfirmedHost(context)) return;",
+            "Drawable cardBackground = (Drawable) field.get(decoration);",
+            "cardBackground.setAlpha(0x90);",
+            "",
+            "// 隐私页三张 hero 卡与 PreferenceFragment$f.s 使用同一浅色 alpha；",
+            "// 应用详情异步重绑时由 View.draw 守卫再次写入，深色保持原生。" );
 
     private static final String SRC_RESERVED = join(
             "// 预留开关：当前无运行时改动，仅保留启用/禁用，便于以后手工扩展。");

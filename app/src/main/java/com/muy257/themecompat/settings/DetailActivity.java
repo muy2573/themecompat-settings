@@ -28,8 +28,9 @@ public final class DetailActivity extends Activity {
         title.setPadding(Ui.dp(this, 22), 0, Ui.dp(this, 22), Ui.dp(this, 2));
         page.addView(title);
         TextView intro = Ui.body(this,
-                "生成器只在目标资源缺失时，复制你所选主题包内已经存在的素材；"
-                        + "不覆盖已有资源，也不会改原始 .mtz。",
+                "生成器从你选择的原始主题生成独立适配包。通常只补齐缺失路径；"
+                        + "仅对报告明确列出的错误 fallback、继承白底或旧版错误资源执行替换/移除。"
+                        + "原始 .mtz 始终不改动。",
                 13, Ui.textSecondary(this));
         intro.setPadding(Ui.dp(this, 22), Ui.dp(this, 4), Ui.dp(this, 22), Ui.dp(this, 2));
         page.addView(intro);
@@ -37,7 +38,7 @@ public final class DetailActivity extends Activity {
         page.addView(Ui.sectionTitle(this, "静态修补：通用窗口背景别名"));
         page.addView(sectionCard(
                 "设置、相机、日历、时钟、文件管理、联系人、短信、录音机、相册、应用安装器、"
-                        + "指南针、通知、AI通话、翻译、垃圾清理。\n\n"
+                        + "安全中心、指南针、通知、AI通话、翻译、垃圾清理。\n\n"
                         + "仅补齐缺少的 window_bg、miuix_appcompat_window_bg、"
                         + "miuix_appcompat_settings_window_bg、secondary_window_bg 的浅色/深色路径"
                         + "及 fallback 映射。\n\n"
@@ -47,11 +48,14 @@ public final class DetailActivity extends Activity {
 
         page.addView(Ui.sectionTitle(this, "静态修补：已验证的模块专用路径"));
         page.addView(sectionCard(
-                "联系人：搜索框 MIUIX 别名。\n"
+                "设置：补齐辅助功能磁贴图标，并按主题包内现有磁贴主色重着色。\n"
+                        + "联系人：搜索框 MIUIX 别名。\n"
                         + "短信：修正原主题夜间 miuix_appcompat_window_bg_drak 的拼写路由；"
                         + "移除验证码页继承的白色 9-patch（由兼容模块改为挂主题画布）。\n"
                         + "文件管理：修正夜间 window_bg_dark 的 fallback 路由。\n"
-                        + "主题商店：补齐 ThemeResourceProxyTabActivity 请求的无密度 drawable 路径。\n"
+                        + "主题商店：恢复旧 ZIP 的 canonical Unicode pathname，标准化 UTF-8 路径；"
+                        + "补齐 ThemeResourceProxyTabActivity 请求的无密度 drawable 路径。\n"
+                        + "安全中心：补齐夜间窗口别名及 fallback。\n"
                         + "小米钱包：仅复制主题自带 app_brand.webp 至夜间启动页路径；主页壁纸不处理。"));
 
         page.addView(Ui.sectionTitle(this, "运行时兼容层（需要在 LSP 手动勾选）"));
@@ -59,7 +63,7 @@ public final class DetailActivity extends Activity {
                 "设置及跳转页、电话设置页（含移动网络）、联系人、日历、时钟、文件管理、"
                         + "短信（含验证码页）、录音机、相册、应用安装器、主题商店（含系统个性化页）、"
                         + "未成年人守护、互传、云服务、音质音效、垃圾清理、传送门、翻译、小米账号、指南针、AI通话、"
-                        + "系统界面（控制中心立绘，默认关闭，可在 Hook 软件列表打开）。\n\n"
+                        + "安全中心、相机设置页，以及系统界面（控制中心立绘，默认关闭，可在 Hook 软件列表打开）。\n\n"
                         + "这一层处理 ROM 在主题背景上额外绘制的纯色遮罩、混淆卡片绘制器、"
                         + "月视图卡片磨砂与日程卡内部填充，并为有夜间别名的宿主应用优先使用其自身深色壁纸；"
                         + "系统界面一项只在控制中心挂载主题立绘，不向 MTZ 写入图片。"
@@ -69,14 +73,17 @@ public final class DetailActivity extends Activity {
         page.addView(sectionCard(
                 "哔哩哔哩（静态尝试已撤销）、小米市场、扫一扫、录屏，以及当前不能在 LSP 作用域页"
                         + "选择的系统组件。这些项目会继续在适配清单中保留“未解决”状态，"
-                        + "避免生成器把失败路径再次写入主题。相机深色画布为原作者素材且风格不匹配，"
-                        + "保持回退，待单独设计。"));
+                        + "避免生成器把失败路径再次写入主题。\n\n"
+                        + "相机拍摄页保持原作者全幅黑底；相机设置页只保证首次进入时清理遮罩，"
+                        + "运行中切换明暗暂不适配。钱包只适配夜间启动图，主页运行时背景不适配。"));
 
         page.addView(Ui.sectionTitle(this, "安全边界"));
         page.addView(sectionCard(
-                "先校验 description.xml 与内层 ZIP；所有新增资源均来自当前所选主题；"
-                        + "已有文件绝不覆盖；原始输入包保持不变。实时进度和本次实际写入摘要"
-                        + "显示在“修补”页的日志与摘要卡片中。"));
+                "先校验 description.xml、外层/内层 ZIP、路径安全和资源大小。旧式 pathname 按"
+                        + " UTF-8 标志、CRC 有效的 0x7075、GB18030 无损回退依次恢复；冲突或真正重复"
+                        + "路径在需要业务修补时明确中止，不静默删文件。\n\n"
+                        + "只重新压缩新增/替换资源，未修改条目的压缩数据和 ZIP 元数据保持原样。"
+                        + "报告分别列出规范化、新增、替换与移除；原始输入包保持不变。"));
         scroll.addView(page);
         Ui.applyTopInset(this, scroll);
         return scroll;

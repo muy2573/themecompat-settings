@@ -496,6 +496,7 @@ final class SettingsSurfaceAdapter {
             Drawable source = null;
             String selectedName = null;
             int id = 0;
+            boolean fallBackToSettings = false;
             if (THEME_MANAGER_PACKAGE.equals(activity.getPackageName())
                     // 系统个性化: the store's theme_window_background is a flat
                     // grey nine-patch in current packs, so the page reads
@@ -554,47 +555,12 @@ final class SettingsSurfaceAdapter {
                 // fallback below.
                 themeContext = activity;
                 resourcePackage = activity.getPackageName();
+                fallBackToSettings = night;
                 names = night
                         ? new String[]{"miuix_appcompat_window_bg_dark", "window_bg_dark"}
                         : new String[]{"miuix_appcompat_window_bg_light", "window_bg_light"};
             } else {
-                String name = THEME_PAGE_BACKGROUND + (night ? "dark" : "light");
-                // Do not make cross-app Resources#getDrawable the only source of
-                // the common Settings wallpaper.  On this HyperOS build it can
-                // transiently yield the stock ColorDrawable after a uiMode switch,
-                // even while ThemeResources still owns the active .mtz archive.
-                source = SettingsThemeResourceStreamBridge.load(activity, night, module);
-                if (source != null) {
-                    selectedName = night
-                            ? "theme-stream:res/drawable-xxhdpi/window_bg_dark.9.png"
-                            : "theme-stream:res/drawable-xxhdpi/window_bg_light.9.png";
-                }
-                Context settingsContext = SETTINGS_PACKAGE.equals(activity.getPackageName())
-                        ? activity
-                        : activity.createPackageContext(SETTINGS_PACKAGE, Context.CONTEXT_IGNORE_SECURITY);
-                // A target app can be one configuration callback behind Settings after
-                // the system changes day/night.  Start from Settings' own themed
-                // resources, then force the requested mode instead of inheriting
-                // whichever mode happened to be cached in the target Activity.
-                android.content.res.Configuration modeConfiguration =
-                        new android.content.res.Configuration(
-                                settingsContext.getResources().getConfiguration());
-                modeConfiguration.uiMode = (modeConfiguration.uiMode
-                        & ~android.content.res.Configuration.UI_MODE_NIGHT_MASK)
-                        | (night
-                        ? android.content.res.Configuration.UI_MODE_NIGHT_YES
-                        : android.content.res.Configuration.UI_MODE_NIGHT_NO);
-                themeContext = settingsContext.createConfigurationContext(modeConfiguration);
-                resourcePackage = SETTINGS_PACKAGE;
-                /*
-                 * Dark mode prefers the module's window wallpaper aliases
-                 * (same artwork set as the light surface) and only falls back
-                 * to the card-page background when none resolves.
-                 */
-                names = night
-                        ? new String[]{"settings_window_bg_dark", "window_bg_dark",
-                        "miuix_appcompat_settings_window_bg_dark", name}
-                        : new String[]{name};
+                return loadSettingsThemeDrawable(activity, night);
             }
             if (source == null) {
                 for (String name : names) {
@@ -607,6 +573,11 @@ final class SettingsSurfaceAdapter {
                     break;
                 }
             }
+            if (source == null && fallBackToSettings) {
+                module.log(Log.INFO, "ThemeCompat", "Host dark artwork absent; using Settings fallback"
+                        + " package=" + activity.getPackageName());
+                return loadSettingsThemeDrawable(activity, true);
+            }
             if (source == null || selectedName == null
                     || source instanceof android.graphics.drawable.ColorDrawable) return null;
             Drawable.ConstantState state = source.getConstantState();
@@ -617,6 +588,49 @@ final class SettingsSurfaceAdapter {
             module.log(Log.ERROR, "ThemeCompat", "Cannot resolve active theme drawable", error);
             return null;
         }
+    }
+
+    private LoadedThemeDrawable loadSettingsThemeDrawable(Activity activity, boolean night)
+            throws Exception {
+        String cardName = THEME_PAGE_BACKGROUND + (night ? "dark" : "light");
+        Drawable source = SettingsThemeResourceStreamBridge.load(activity, night, module);
+        String selectedName = source == null ? null
+                : (night
+                ? "theme-stream:res/drawable-xxhdpi/window_bg_dark.9.png"
+                : "theme-stream:res/drawable-xxhdpi/window_bg_light.9.png");
+        Context settingsContext = SETTINGS_PACKAGE.equals(activity.getPackageName())
+                ? activity
+                : activity.createPackageContext(SETTINGS_PACKAGE, Context.CONTEXT_IGNORE_SECURITY);
+        android.content.res.Configuration modeConfiguration =
+                new android.content.res.Configuration(settingsContext.getResources().getConfiguration());
+        modeConfiguration.uiMode = (modeConfiguration.uiMode
+                & ~android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                | (night
+                ? android.content.res.Configuration.UI_MODE_NIGHT_YES
+                : android.content.res.Configuration.UI_MODE_NIGHT_NO);
+        Context themeContext = settingsContext.createConfigurationContext(modeConfiguration);
+        int id = 0;
+        if (source == null) {
+            String[] names = night
+                    ? new String[]{"settings_window_bg_dark", "window_bg_dark",
+                    "miuix_appcompat_settings_window_bg_dark", cardName}
+                    : new String[]{cardName};
+            for (String name : names) {
+                id = themeContext.getResources().getIdentifier(name, "drawable", SETTINGS_PACKAGE);
+                if (id == 0) continue;
+                Drawable candidate = themeContext.getResources().getDrawable(id, themeContext.getTheme());
+                if (candidate == null || candidate instanceof android.graphics.drawable.ColorDrawable) continue;
+                source = candidate;
+                selectedName = name;
+                break;
+            }
+        }
+        if (source == null || selectedName == null
+                || source instanceof android.graphics.drawable.ColorDrawable) return null;
+        Drawable.ConstantState state = source.getConstantState();
+        Drawable drawable = state == null ? source.mutate()
+                : state.newDrawable(themeContext.getResources(), themeContext.getTheme()).mutate();
+        return new LoadedThemeDrawable(drawable, SETTINGS_PACKAGE + ':' + selectedName, id);
     }
 
     private static final class LoadedThemeDrawable {

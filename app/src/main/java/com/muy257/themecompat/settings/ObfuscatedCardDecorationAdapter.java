@@ -17,27 +17,30 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.libxposed.api.XposedModule;
 
 /**
- * Light-mode card alpha for the last two standalone pages, Mi Share and
- * Cloud, whose card renderer keeps R8-obfuscated names.
+ * Light-mode card alpha for standalone pages whose card renderer keeps
+ * R8-obfuscated names or moved between MIUIX releases.
  *
  * jadx on the shipped APKs proved both pages share one vendor hierarchy: a
- * preference host's inner ItemDecoration (Mi Share c7.l$c extends g7.a,
- * Cloud j6.l$c extends o6.a) paints every rounded row through one inherited
- * Paint, re-reading the color from a card ColorDrawable field (f4222r /
- * f18504s) before each drawPath.  androidx is obfuscated in these apps too,
- * so ItemDecoration.onDraw is only reachable as the declared method "g" on
- * the shared base class; a single hook there covers every subclass because
- * none of them overrides it.
+ * preference host's inner ItemDecoration paints every rounded row through one
+ * inherited Paint, re-reading the color from a card ColorDrawable field before
+ * each drawPath. Current Cloud builds use h6.l$c and l6.f over m6.a; o6.a has
+ * become an unrelated animator. Newer Account builds instead declare the
+ * draw method directly on miuix.preference.m$e with a different name and
+ * parameter count. Candidate classes are accepted only when they expose a
+ * Canvas draw method with a View/RecyclerView parameter, so unrelated reused
+ * obfuscated names are rejected.
  *
  * Fields are re-scanned before every draw instead of being captured once:
- * Mi Share's C()/w() and Cloud's F()/H() replace the color field and repaint
+ * Mi Share and Cloud refresh methods replace the color field and repaint
  * the Paint after a day/night or floating-window change, so a one-time
  * capture would go stale.  Dark mode stays observational except for
  * restoring an alpha this adapter itself dimmed, so a theme refresh that
@@ -48,25 +51,29 @@ import io.github.libxposed.api.XposedModule;
 final class ObfuscatedCardDecorationAdapter {
     private static final int LIGHT_CARD_ALPHA = 0x48;
 
-    /** Obfuscated ItemDecoration base class whose declared "g" is onDraw. */
-    private static final Map<String, String> BASE_RENDERERS;
+    /** Newest first, followed by the renderer used by older system-app builds. */
+    private static final Map<String, String[]> RENDERER_CANDIDATES;
 
     static {
-        Map<String, String> renderers = new HashMap<>();
-        renderers.put("com.miui.mishare.connectivity", "g7.a");
-        renderers.put("com.miui.cloudservice", "o6.a");
-        // Xiaomi Account keeps vendor class names but obfuscates androidx the
-        // same way: miuix.preference.m$e extends wb.a with the identical
-        // Paint (f25824a) plus card ColorDrawable field (f21724s) pattern.
-        renderers.put("com.xiaomi.account", "wb.a");
-        BASE_RENDERERS = Collections.unmodifiableMap(renderers);
+        Map<String, String[]> renderers = new HashMap<>();
+        renderers.put("com.miui.mishare.connectivity", new String[]{"g7.a"});
+        // HyperOS 3 R-25.9 uses both the generic preference decoration and a
+        // standalone RecyclerView decoration on the Cloud home page.  The
+        // previous o6.a name is now an unrelated animator.
+        renderers.put("com.miui.cloudservice", new String[]{"h6.l$c", "l6.f", "o6.a"});
+        // Account R-25.10 moved the ItemDecoration implementation into the
+        // MIUIX fragment inner class.  Older builds still use wb.a.
+        renderers.put("com.xiaomi.account", new String[]{"miuix.preference.m$e", "wb.a"});
+        RENDERER_CANDIDATES = Collections.unmodifiableMap(renderers);
     }
 
     private final XposedModule module;
     private final ClassLoader classLoader;
     private final String targetPackage;
     private final Map<Class<?>, Field[]> fieldCache = new ConcurrentHashMap<>();
-    private volatile boolean logged;
+    private final Map<ColorDrawable, Integer> originalDrawableColors =
+            Collections.synchronizedMap(new IdentityHashMap<>());
+    private final Set<String> loggedRenderers = ConcurrentHashMap.newKeySet();
 
     ObfuscatedCardDecorationAdapter(XposedModule module, ClassLoader classLoader,
             String targetPackage) {
@@ -76,32 +83,57 @@ final class ObfuscatedCardDecorationAdapter {
     }
 
     static boolean supports(String packageName) {
-        return BASE_RENDERERS.containsKey(packageName);
+        return RENDERER_CANDIDATES.containsKey(packageName);
     }
 
     void install() {
-        String baseName = BASE_RENDERERS.get(targetPackage);
-        if (baseName == null) return;
-        try {
-            Class<?> base = Class.forName(baseName, false, classLoader);
-            int draws = 0;
-            for (Method method : base.getDeclaredMethods()) {
-                if (!"g".equals(method.getName())) continue;
-                Class<?>[] types = method.getParameterTypes();
-                if (types.length != 3 || types[0] != Canvas.class) continue;
-                method.setAccessible(true);
-                module.hook(method).intercept(chain -> {
-                    Object[] args = chain.getArgs().toArray(new Object[0]);
-                    applyBeforeDraw(chain.getThisObject(), args);
-                    return chain.proceed(args);
-                });
-                draws++;
+        String[] candidates = RENDERER_CANDIDATES.get(targetPackage);
+        if (candidates == null) return;
+        List<String> misses = new ArrayList<>();
+        List<String> installed = new ArrayList<>();
+        for (String candidate : candidates) {
+            try {
+                Class<?> base = Class.forName(candidate, false, classLoader);
+                int draws = 0;
+                for (Method method : base.getDeclaredMethods()) {
+                    Class<?>[] types = method.getParameterTypes();
+                    if (types.length < 2 || types[0] != Canvas.class
+                            || !hasViewParameter(types)) continue;
+                    method.setAccessible(true);
+                    module.hook(method).intercept(chain -> {
+                        Object[] args = chain.getArgs().toArray(new Object[0]);
+                        applyBeforeDraw(chain.getThisObject(), args);
+                        return chain.proceed(args);
+                    });
+                    draws++;
+                }
+                if (draws > 0) {
+                    installed.add(candidate + ":" + draws);
+                    continue;
+                }
+                misses.add(candidate + ":no-compatible-draw");
+            } catch (ClassNotFoundException error) {
+                misses.add(candidate + ":absent");
+            } catch (Throwable error) {
+                module.log(Log.WARN, "ObfCards", "candidate failed package=" + targetPackage
+                        + " renderer=" + candidate, error);
+                misses.add(candidate + ":error");
             }
-            module.log(Log.INFO, "ObfCards", "installed package=" + targetPackage
-                    + " base=" + baseName + " draws=" + draws);
-        } catch (Throwable error) {
-            module.log(Log.ERROR, "ObfCards", "cannot install package=" + targetPackage, error);
         }
+        if (!installed.isEmpty()) {
+            module.log(Log.INFO, "ObfCards", "installed package=" + targetPackage
+                    + " renderers=" + String.join(",", installed));
+            return;
+        }
+        module.log(Log.WARN, "ObfCards", "no compatible renderer package=" + targetPackage
+                + " candidates=" + String.join(",", misses));
+    }
+
+    private static boolean hasViewParameter(Class<?>[] types) {
+        for (int index = 1; index < types.length; index++) {
+            if (View.class.isAssignableFrom(types[index])) return true;
+        }
+        return false;
     }
 
     private void applyBeforeDraw(Object renderer, Object[] args) {
@@ -124,10 +156,10 @@ final class ObfuscatedCardDecorationAdapter {
                 if (adjustDrawable((Drawable) value, night)) drawables++;
             }
         }
-        if ((drawables > 0 || paints > 0) && !logged) {
-            logged = true;
+        String rendererName = renderer.getClass().getName();
+        if ((drawables > 0 || paints > 0) && loggedRenderers.add(rendererName)) {
             module.log(Log.INFO, "ObfCards", "applied package=" + targetPackage
-                    + " renderer=" + renderer.getClass().getName() + " mode="
+                    + " renderer=" + rendererName + " mode="
                     + (night ? "dark-restore" : "light") + " drawables=" + drawables
                     + " paints=" + paints);
         }
@@ -148,6 +180,10 @@ final class ObfuscatedCardDecorationAdapter {
     }
 
     private boolean adjustDrawable(Drawable drawable, boolean night) {
+        if ("com.miui.cloudservice".equals(targetPackage)
+                && drawable instanceof ColorDrawable) {
+            return adjustCloudSourceColor((ColorDrawable) drawable, night);
+        }
         int color;
         if (drawable instanceof ColorDrawable) {
             color = ((ColorDrawable) drawable).getColor();
@@ -170,6 +206,34 @@ final class ObfuscatedCardDecorationAdapter {
                 || alpha == LIGHT_CARD_ALPHA) return false;
         drawable.mutate();
         drawable.setAlpha(LIGHT_CARD_ALPHA);
+        return true;
+    }
+
+    /**
+     * Cloud's h6.l$c and l6.f do not draw their ColorDrawable fields. They
+     * call getColor() during every draw and copy that value into an inherited
+     * Paint, overwriting any Paint alpha applied at method entry. Adjust the
+     * source color itself so that the renderer copies the translucent value.
+     */
+    private boolean adjustCloudSourceColor(ColorDrawable drawable, boolean night) {
+        int current = drawable.getColor();
+        Integer original = originalDrawableColors.get(drawable);
+        if (night) {
+            if (original == null || current == original) return false;
+            drawable.mutate();
+            drawable.setColor(original);
+            return true;
+        }
+        if (Color.alpha(current) != 255 || !isNearWhite(current)) return false;
+        if (original == null) {
+            original = current;
+            originalDrawableColors.put(drawable, original);
+        }
+        int target = Color.argb(LIGHT_CARD_ALPHA, Color.red(original),
+                Color.green(original), Color.blue(original));
+        if (current == target) return false;
+        drawable.mutate();
+        drawable.setColor(target);
         return true;
     }
 
