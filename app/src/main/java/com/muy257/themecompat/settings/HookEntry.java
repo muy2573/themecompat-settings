@@ -1,5 +1,9 @@
 package com.muy257.themecompat.settings;
 
+import android.app.Application;
+import android.app.Instrumentation;
+
+import java.lang.reflect.Method;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -60,15 +64,73 @@ public final class HookEntry extends XposedModule {
     public void onPackageLoaded(PackageLoadedParam param) {
         String packageName = param.getPackageName();
         if (packageName == null || packageName.isEmpty() || !isSupported(packageName)) return;
-        CardAlpha.bind(this);
         HookSwitches.bindIfPossible(this);
-        synchronized (INSTALLED_PACKAGES) {
-            if (!INSTALLED_PACKAGES.add(packageName)) return;
-        }
         boolean hookEnabled = HookSwitches.enabled(packageName);
         log(android.util.Log.INFO, "HookEntry",
                 "switch " + packageName + " enabled=" + hookEnabled);
         if (!hookEnabled) {
+            return;
+        }
+        installWhenApplicationReady(packageName, param.getDefaultClassLoader());
+    }
+
+    private void installWhenApplicationReady(String packageName, ClassLoader loader) {
+        Application current = currentApplication();
+        if (current != null) {
+            installForTheme(packageName, loader, current);
+            return;
+        }
+        try {
+            Method method = Instrumentation.class.getDeclaredMethod(
+                    "callApplicationOnCreate", Application.class);
+            method.setAccessible(true);
+            hook(method).intercept(chain -> {
+                Object[] args = chain.getArgs().toArray(new Object[0]);
+                Object result = chain.proceed(args);
+                if (args.length > 0 && args[0] instanceof Application) {
+                    installForTheme(packageName, loader, (Application) args[0]);
+                }
+                return result;
+            });
+        } catch (Throwable error) {
+            log(android.util.Log.WARN, "HookEntry",
+                    "cannot wait for application context; hooks skipped package=" + packageName,
+                    error);
+        }
+    }
+
+    private Application currentApplication() {
+        try {
+            Class<?> activityThread = Class.forName("android.app.ActivityThread");
+            Method method = activityThread.getDeclaredMethod("currentApplication");
+            method.setAccessible(true);
+            Object value = method.invoke(null);
+            return value instanceof Application ? (Application) value : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private void installForTheme(String packageName, ClassLoader loader, Application application) {
+        synchronized (INSTALLED_PACKAGES) {
+            if (!INSTALLED_PACKAGES.add(packageName)) return;
+        }
+        ThemeCompatibilityGate.Status theme = ThemeCompatibilityGate.inspect(application);
+        log(android.util.Log.INFO, "HookEntry",
+                "theme " + packageName + " status=" + theme);
+        if (theme == ThemeCompatibilityGate.Status.INCOMPATIBLE) {
+            log(android.util.Log.WARN, "HookEntry",
+                    "adapted-theme marker missing; hooks skipped package=" + packageName);
+            return;
+        }
+        CardAlpha.bind(this);
+        if (theme == ThemeCompatibilityGate.Status.UNKNOWN) {
+            // This adapter first acquires a non-solid themed window canvas and
+            // only then clears covering hosts. It is the sole fail-safe path
+            // when secure theme metadata cannot be read.
+            new SettingsSurfaceAdapter(this, loader).install();
+            log(android.util.Log.WARN, "HookEntry",
+                    "theme unknown; installed safe surface-only path package=" + packageName);
             return;
         }
 
@@ -91,7 +153,7 @@ public final class HookEntry extends XposedModule {
         // shared obfuscated base onDraw once per package; the adapter holds
         // the full evidence chain.
         if (ObfuscatedCardDecorationAdapter.supports(packageName)) {
-            new ObfuscatedCardDecorationAdapter(this, param.getDefaultClassLoader(),
+            new ObfuscatedCardDecorationAdapter(this, loader,
                     packageName).install();
         }
 
@@ -100,7 +162,7 @@ public final class HookEntry extends XposedModule {
         // before the broad page-surface adapter; it edits no View background
         // and makes no dark-mode write.
         if (VerifiedLightCardDecorationAdapter.supports(packageName)) {
-            new VerifiedLightCardDecorationAdapter(this, param.getDefaultClassLoader(), packageName).install();
+            new VerifiedLightCardDecorationAdapter(this, loader, packageName).install();
         }
 
         // Exact full-page activities proved to need the Settings surface
@@ -108,9 +170,9 @@ public final class HookEntry extends XposedModule {
         // deliberately absent from the finished build.
         if (SettingsSurfaceAdapter.supportsHostedSettingsPackage(packageName)
                 || SECURITY_CENTER_PACKAGE.equals(packageName)) {
-            new SettingsSurfaceAdapter(this, param.getDefaultClassLoader()).install();
+            new SettingsSurfaceAdapter(this, loader).install();
             if (SECURITY_CENTER_PACKAGE.equals(packageName)) {
-                new SecurityCenterCardSurfaceAdapter(this, param.getDefaultClassLoader()).install();
+                new SecurityCenterCardSurfaceAdapter(this, loader).install();
             }
             if (AI_TRANSLATE_PACKAGE.equals(packageName)) {
                 // Translate home: wallpaper already applied by the surface
@@ -125,7 +187,7 @@ public final class HookEntry extends XposedModule {
             return;
         }
         if (SETTINGS_PACKAGE.equals(packageName)) {
-            new SettingsSurfaceAdapter(this, param.getDefaultClassLoader()).install();
+            new SettingsSurfaceAdapter(this, loader).install();
             return;
         }
         if (PHONE_PACKAGE.equals(packageName)) {
@@ -133,19 +195,19 @@ public final class HookEntry extends XposedModule {
             // Its verified white group drawable and companion Canvas Paint are
             // handled together by this adapter; the generic surface adapter
             // keeps the themed page bitmap beneath the resulting translucent card.
-            new SettingsSurfaceAdapter(this, param.getDefaultClassLoader()).install();
-            new PreferenceCardPaintAdapter(this, param.getDefaultClassLoader(), packageName).install();
+            new SettingsSurfaceAdapter(this, loader).install();
+            new PreferenceCardPaintAdapter(this, loader, packageName).install();
             new MobileNetworkSimCardAdapter(this).install();
             return;
         }
         if (MILINK_PACKAGE.equals(packageName)) {
-            new SettingsSurfaceAdapter(this, param.getDefaultClassLoader()).install();
-            new PreferenceCardPaintAdapter(this, param.getDefaultClassLoader(), packageName).install();
+            new SettingsSurfaceAdapter(this, loader).install();
+            new PreferenceCardPaintAdapter(this, loader, packageName).install();
             return;
         }
         if (HOME_PACKAGE.equals(packageName)) {
-            new SettingsSurfaceAdapter(this, param.getDefaultClassLoader()).install();
-            new PreferenceCardPaintAdapter(this, param.getDefaultClassLoader(), packageName).install();
+            new SettingsSurfaceAdapter(this, loader).install();
+            new PreferenceCardPaintAdapter(this, loader, packageName).install();
             return;
         }
         if (CALENDAR_PACKAGE.equals(packageName)) {
@@ -167,18 +229,18 @@ public final class HookEntry extends XposedModule {
             // artwork plus transparent action-bar blocks; the card adapter
             // now enforces alpha per draw because list rebinds overwrite it.
             new MessagingVerificationThemeAdapter(this).install();
-            new MessagingVerificationCardAdapter(this, param.getDefaultClassLoader()).install();
+            new MessagingVerificationCardAdapter(this, loader).install();
             return;
         }
         if (CONTACTS_PACKAGE.equals(packageName)) {
             new MessagingSurfaceAdapter(this, CONTACTS_PACKAGE, "ContactsSurface").install();
-            new ContactsCardSurfaceAdapter(this, param.getDefaultClassLoader()).install();
+            new ContactsCardSurfaceAdapter(this, loader).install();
             return;
         }
         if (RECORDER_PACKAGE.equals(packageName)) {
             new RecorderSettingsSurfaceAdapter(this).install();
             new MessagingSurfaceAdapter(this, RECORDER_PACKAGE, "RecorderSurface").install();
-            new RecorderListSurfaceAdapter(this, param.getDefaultClassLoader()).install();
+            new RecorderListSurfaceAdapter(this, loader).install();
             return;
         }
         if (GALLERY_PACKAGE.equals(packageName)) {
@@ -191,12 +253,12 @@ public final class HookEntry extends XposedModule {
             return;
         }
         if (THEME_MANAGER_PACKAGE.equals(packageName)) {
-            new SettingsSurfaceAdapter(this, param.getDefaultClassLoader()).install();
+            new SettingsSurfaceAdapter(this, loader).install();
             return;
         }
 
         if (SYSTEM_UI_PACKAGE.equals(packageName)) {
-            new SystemUiShadeArtAdapter(this, param.getDefaultClassLoader()).install();
+            new SystemUiShadeArtAdapter(this, loader).install();
             return;
         }
 
@@ -207,7 +269,7 @@ public final class HookEntry extends XposedModule {
                 || SYSTEM_UI_PLUGIN_PACKAGE.equals(packageName)) {
             return;
         }
-        new SettingsSurfaceAdapter(this, param.getDefaultClassLoader()).install();
+        new SettingsSurfaceAdapter(this, loader).install();
     }
 
     private static boolean isSupported(String packageName) {

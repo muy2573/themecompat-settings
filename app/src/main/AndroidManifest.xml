@@ -1,10 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- The restart-scope page resolves every LSPosed scope entry's
-         label; without this the visibility filter hides most packages. -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Package visibility is limited to the module's curated LSPosed scope.
+         Restart still works by package name if a future entry has no label. -->
     <queries>
+        <package android:name="com.android.settings" />
+        <package android:name="com.milink.service" />
+        <package android:name="com.android.phone" />
+        <package android:name="com.xiaomi.account" />
+        <package android:name="com.miui.home" />
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.powerkeeper" />
+        <package android:name="com.xiaomi.misettings" />
+        <package android:name="com.android.contacts" />
+        <package android:name="com.android.calendar" />
         <package android:name="com.android.camera" />
+        <package android:name="com.android.deskclock" />
+        <package android:name="com.android.fileexplorer" />
+        <package android:name="com.miui.packageinstaller" />
+        <package android:name="com.android.mms" />
+        <package android:name="com.android.soundrecorder" />
+        <package android:name="com.miui.gallery" />
+        <package android:name="tv.danmaku.bili" />
+        <package android:name="com.android.thememanager" />
+        <package android:name="com.miui.themestore" />
+        <package android:name="com.miui.contentextension" />
+        <package android:name="com.miui.mishare.connectivity" />
+        <package android:name="com.miui.cleanmaster" />
+        <package android:name="com.miui.misound" />
+        <package android:name="com.miui.cloudservice" />
+        <package android:name="com.xiaomi.aiasst.vision" />
+        <package android:name="com.android.updater" />
+        <package android:name="com.android.providers.downloads.ui" />
+        <package android:name="com.android.systemui" />
+        <package android:name="miui.systemui.plugin" />
+        <package android:name="com.miui.compass" />
+        <package android:name="com.xiaomi.aiasst.service" />
+        <package android:name="com.miui.greenguard" />
     </queries>
     <application
         android:allowBackup="false"

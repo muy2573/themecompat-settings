@@ -29,7 +29,8 @@ public final class HookAppsActivity extends Activity {
                 "点击应用查看具体 Hook 的元素，条目可展开查看源码。右侧开关控制该应用的"
                         + " Hook 是否加载：改动在该应用下次启动时生效"
                         + "（可用 Hook 页的“重启作用域”立即生效）。"
-                        + "除系统界面默认关闭外，其余默认开启。", 13,
+                        + "应用开关还受 Hook 页总开关和适配主题标记约束；远端配置不可读时"
+                        + "全部安全停用。除系统界面默认关闭外，其余应用默认开启。", 13,
                 Ui.textSecondary(this));
         summary.setPadding(Ui.dp(this, 22), Ui.dp(this, 4), Ui.dp(this, 22), Ui.dp(this, 2));
         page.addView(summary);
@@ -58,10 +59,8 @@ public final class HookAppsActivity extends Activity {
         Ui.MiuixSwitch toggle = new Ui.MiuixSwitch(this);
         android.content.SharedPreferences store =
                 ThemeCompatApplication.hookSwitchPreferences();
-        boolean enabled = store != null
-                ? store.getBoolean(HookSwitches.key(packageName),
-                        HookSwitches.defaultEnabled(packageName))
-                : HookSwitches.defaultEnabled(packageName);
+        boolean enabled = store != null && store.getBoolean(HookSwitches.key(packageName),
+                HookSwitches.defaultEnabled(packageName));
         toggle.setChecked(enabled);
         toggle.setOnCheckedChange(value -> {
             android.content.SharedPreferences editable =

@@ -1078,6 +1078,10 @@ final class MtzCompatibilityPatcher {
             if (!description.contains("K70U 静态资源别名已补齐")) {
                 description = description.trim() + "\nK70U 静态资源别名已补齐；系统页面遮罩由配套兼容模块处理\n";
             }
+            if (!description.contains(CompatibilityContract.PATCH_MARKER)) {
+                description = description.trim() + "\n"
+                        + CompatibilityContract.PATCH_MARKER_LINE + "\n";
+            }
             String replacement = "<description" + nullToEmpty(matcher.group(1)) + "><![CDATA["
                     + description + "]]></description>";
             matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));

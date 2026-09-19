@@ -67,7 +67,12 @@ public final class DetailActivity extends Activity {
                         + "这一层处理 ROM 在主题背景上额外绘制的纯色遮罩、混淆卡片绘制器、"
                         + "月视图卡片磨砂与日程卡内部填充，并为有夜间别名的宿主应用优先使用其自身深色壁纸；"
                         + "系统界面一项只在控制中心挂载主题立绘，不向 MTZ 写入图片。"
-                        + "卡片透明度可在 Hook 页统一调节。"));
+                        + "卡片透明度可在 Hook 页统一调节。\n\n"
+                        + "生成主题的 description.xml 会写入版本化适配标记。运行时总开关默认关闭；"
+                        + "只有 LSPosed 远端配置可读、总开关已开启、应用开关已开启且当前主题带有"
+                        + "适配标记时，卡片和遮罩 Hook 才会加载。作者名 weeazn 仅作人工提示，"
+                        + "不作为可被随意修改的安全凭据。主题状态无法读取时，仅保留会先取得"
+                        + "非纯色主题画布再清理宿主的安全背景路径。"));
 
         page.addView(Ui.sectionTitle(this, "明确不写入生成主题"));
         page.addView(sectionCard(
@@ -83,7 +88,9 @@ public final class DetailActivity extends Activity {
                         + " UTF-8 标志、CRC 有效的 0x7075、GB18030 无损回退依次恢复；冲突或真正重复"
                         + "路径在需要业务修补时明确中止，不静默删文件。\n\n"
                         + "只重新压缩新增/替换资源，未修改条目的压缩数据和 ZIP 元数据保持原样。"
-                        + "报告分别列出规范化、新增、替换与移除；原始输入包保持不变。"));
+                        + "报告分别列出规范化、新增、替换与移除；原始输入包保持不变。\n\n"
+                        + "静态修补只使用系统文件选择器授予的 URI 访问权，不需要 Root 或存储权限；"
+                        + "Hook 只依赖 LSPosed 作用域。Root 仅在用户主动点击“重启作用域”时按需检测。"));
         scroll.addView(page);
         Ui.applyTopInset(this, scroll);
         return scroll;

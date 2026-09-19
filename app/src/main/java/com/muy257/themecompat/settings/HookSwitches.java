@@ -11,8 +11,9 @@ import io.github.libxposed.api.XposedModule;
  * key "hook_<package>"); HookEntry consults the same store before installing
  * any adapter.  Hooks install at process start, so a flip reaches a running
  * app on its next launch (the Hook page's restart button forces it).
- * Every app defaults ON; the control-center artwork hook on SystemUI is the
- * owner-designated exception and ships OFF.
+ * The global switch defaults OFF. Once it is explicitly enabled and the
+ * remote preference snapshot is readable, every app defaults ON; the
+ * control-center artwork hook on SystemUI is the owner-designated exception.
  */
 final class HookSwitches {
     private static final String STORE = "hook_switches";
@@ -25,6 +26,7 @@ final class HookSwitches {
     private static volatile long lastRead;
     private static volatile String bindError;
     private static volatile String lastLoggedError;
+    private static volatile boolean snapshotReady;
     /** Explicit user choices only; missing keys fall back to defaults. */
     private static final java.util.HashMap<String, Boolean> values = new java.util.HashMap<>();
 
@@ -61,7 +63,11 @@ final class HookSwitches {
 
     static boolean enabled(String packageName) {
         refresh();
+        if (!snapshotReady) return false;
         synchronized (values) {
+            if (!Boolean.TRUE.equals(values.get(CompatibilityContract.HOOK_MASTER_KEY))) {
+                return false;
+            }
             Boolean explicit = values.get(packageName);
             return explicit != null ? explicit : defaultEnabled(packageName);
         }
@@ -82,7 +88,10 @@ final class HookSwitches {
                 return;
             }
             preferences = store;
-            if (preferences == null) return;
+            if (preferences == null) {
+                snapshotReady = false;
+                return;
+            }
         }
         long now = SystemClock.elapsedRealtime();
         if (now - lastRead < REFRESH_INTERVAL_MS) return;
@@ -91,17 +100,22 @@ final class HookSwitches {
         try {
             for (java.util.Map.Entry<String, ?> entry : preferences.getAll().entrySet()) {
                 String key = entry.getKey();
-                if (key != null && key.startsWith(PREFIX)
-                        && entry.getValue() instanceof Boolean) {
-                    snapshot.put(key.substring(PREFIX.length()), (Boolean) entry.getValue());
+                if (key != null && entry.getValue() instanceof Boolean) {
+                    if (CompatibilityContract.HOOK_MASTER_KEY.equals(key)) {
+                        snapshot.put(key, (Boolean) entry.getValue());
+                    } else if (key.startsWith(PREFIX)) {
+                        snapshot.put(key.substring(PREFIX.length()), (Boolean) entry.getValue());
+                    }
                 }
             }
         } catch (Throwable ignored) {
+            snapshotReady = false;
             return;
         }
         synchronized (values) {
             values.clear();
             values.putAll(snapshot);
         }
+        snapshotReady = true;
     }
 }

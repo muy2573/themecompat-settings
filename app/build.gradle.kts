@@ -13,8 +13,8 @@ android {
         // Java runtime classes used by the public LSPosed service bridge.
         minSdk = 35
         targetSdk = 35
-        versionCode = 337
-        versionName = "1.1.0"
+        versionCode = 338
+        versionName = "1.1.1"
     }
 
     buildTypes {

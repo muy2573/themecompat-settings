@@ -114,7 +114,6 @@ public final class MainActivity extends Activity {
     private TextView patchLogView;
     private ScrollView patchLogScroll;
     private final StringBuilder patchLog = new StringBuilder();
-    private boolean rootAvailable;
 
     @Override
     public void onCreate(Bundle state) {
@@ -133,7 +132,6 @@ public final class MainActivity extends Activity {
         Ui.applyStatusBar(this);
         selectTab(TAB_PATCH);
         appendLog("就绪");
-        checkRootInBackground();
     }
 
     private FrameLayout.LayoutParams bottomBarParams() {
@@ -601,6 +599,36 @@ public final class MainActivity extends Activity {
         status.setPadding(Ui.dp(this, 22), Ui.dp(this, 4), Ui.dp(this, 22), Ui.dp(this, 2));
         page.addView(status);
 
+        LinearLayout masterCard = Ui.cardContainer(this);
+        LinearLayout masterRow = Ui.row(this, R.drawable.ic_hook,
+                "运行时 Hook 总开关", themeGateSummary(), false, null);
+        Ui.MiuixSwitch masterSwitch = new Ui.MiuixSwitch(this);
+        android.content.SharedPreferences hookStore =
+                ThemeCompatApplication.hookSwitchPreferences();
+        masterSwitch.setChecked(hookStore != null && hookStore.getBoolean(
+                CompatibilityContract.HOOK_MASTER_KEY, false));
+        masterSwitch.setOnCheckedChange(value -> {
+            android.content.SharedPreferences store =
+                    ThemeCompatApplication.hookSwitchPreferences();
+            if (store == null) {
+                masterSwitch.setChecked(!value);
+                Toast.makeText(this, "LSPosed 配置服务未连接，未修改总开关",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            store.edit().putBoolean(CompatibilityContract.HOOK_MASTER_KEY, value).apply();
+            String message = value
+                    ? "总开关已开启；适配主题标记有效时，下次启动目标应用加载 Hook"
+                    : "总开关已关闭；下次启动目标应用将跳过 Hook";
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        });
+        LinearLayout.LayoutParams masterSwitchParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        masterSwitchParams.leftMargin = Ui.dp(this, 10);
+        masterRow.addView(masterSwitch, masterSwitchParams);
+        masterCard.addView(masterRow);
+        page.addView(masterCard, Ui.cardParams(this));
+
         LinearLayout appsCard = Ui.cardContainer(this);
         appsCard.addView(Ui.row(this, R.drawable.ic_hook, "Hook 软件", null, true,
                 view -> startActivity(new Intent(this, HookAppsActivity.class))));
@@ -618,6 +646,17 @@ public final class MainActivity extends Activity {
         page.addView(restartCard, Ui.cardParams(this));
         scroll.addView(page);
         return scroll;
+    }
+
+    private String themeGateSummary() {
+        ThemeCompatibilityGate.Status state = ThemeCompatibilityGate.inspect(this);
+        if (state == ThemeCompatibilityGate.Status.COMPATIBLE) {
+            return "已识别由本模块生成并应用的适配主题";
+        }
+        if (state == ThemeCompatibilityGate.Status.INCOMPATIBLE) {
+            return "当前主题无适配标记；即使开启也会安全跳过";
+        }
+        return "暂时无法读取主题标记；卡片和遮罩 Hook 将跳过";
     }
 
     // ------------------------------------------------------------------
@@ -691,10 +730,10 @@ public final class MainActivity extends Activity {
             "① 在「修补」页点击选择，挑选 weeazn 澎湃OS3 的 .mtz / .zip 主题包。\n"
             + "② 点击修补并选择保存位置，生成适配主题。\n"
             + "③ 在主题商店导入生成的主题并应用。\n"
-            + "④ 首次使用：在 LSPosed 中勾选作用域，再打开「Hook」页的“重启作用域”，"
-            + "勾选需要重启的应用后点击重启（系统界面也可在此重启）。\n"
-            + "⑤ 「Hook 软件」列表内每个应用都有开关，控制该应用的 Hook 是否加载"
-            + "（系统界面默认关闭）；开关在对应进程下次启动时生效。";
+            + "④ 首次使用：在 LSPosed 中勾选作用域，再到「Hook」页确认已识别适配主题，"
+            + "手动打开运行时 Hook 总开关。\n"
+            + "⑤ 「Hook 软件」列表内每个应用都有独立开关（系统界面默认关闭）。"
+            + "开关在对应进程下次启动时生效；需要立即重载时再使用“重启作用域”（此功能才需要 Root）。";
 
     private static final String ALPHA_NOTE =
             "数值为不透明度：0% 全透明，100% 实心。默认浅色 0x48、深色 0x3D（已验证参考值）。"
@@ -813,15 +852,6 @@ public final class MainActivity extends Activity {
         View content = patchLogScroll.getChildAt(0);
         int maxScroll = Math.max(0, content.getHeight() - patchLogScroll.getHeight());
         return patchLogScroll.getScrollY() >= maxScroll - Ui.dp(this, 2);
-    }
-
-    private void checkRootInBackground() {
-        appendLog("正在检测 Root（su）…");
-        new Thread(() -> {
-            RootScopeProcessRestarter.RootStatus root = RootScopeProcessRestarter.checkRoot();
-            rootAvailable = root.available;
-            runOnUiThread(() -> appendLog(root.message));
-        }, "ThemeCompatRootCheck").start();
     }
 
     private String outputName() {
