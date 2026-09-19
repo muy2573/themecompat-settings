@@ -6,7 +6,7 @@
 - 运行时 Hook：清理系统应用盖在主题画布上的纯色宿主与卡片填充，并统一调节卡片透明度。
 - 应用内审计页：按应用列出实际 Hook 元素、实现摘要和对应源码片段。
 
-当前发布版本：**v1.1.1（versionCode 338）**。验证设备为 Redmi K70 Ultra / HyperOS 3。
+当前发布版本：**v1.1.2（versionCode 339）**，下载见 [Releases](https://github.com/muy2573/themecompat-settings/releases/latest)。验证设备为 Redmi K70 Ultra / HyperOS 3。
 
 ## 静态修补
 
@@ -27,7 +27,7 @@
 
 不同 raw name 恢复到同一 canonical pathname 时中止；需要业务修补的 ZIP 若含真正同名重复条目也中止，不再静默删除。只有新增或替换资源会重新压缩，未修改条目的 compressed stream、CRC、方法、extra、comment 与平台元数据保持原样。生成摘要分别报告 normalized / added / replaced / removed。
 
-当前 NachoNeko 样本的验收结果：主题商店原始 206 条，规范化 9 个中文 pathname；业务修补后新增 13、替换 `theme_fallback.xml` 1、删除 0，其余 205 条记录保持原样。完整适配包共 67 个外层条目、46 个内层 ZIP、5734 个内层条目，全部 CRC 校验通过。
+当前 NachoNeko 样本的验收结果：主题商店原始 206 条，规范化 9 个中文 pathname；业务修补后新增 13、替换 `theme_fallback.xml` 1、删除 0，其余 205 条记录保持原样。完整适配包共 67 个外层条目、46 个内层 ZIP、5734 个内层条目，全部 CRC 校验通过。（以上为 v338 修补器的样本结果；v339 起每个被重写的模块会额外写入 1 条 `themecompat.marker` 记录，重新生成的包新增计数会相应增加。）
 
 ## 运行时 Hook
 
@@ -71,6 +71,6 @@ gradlew test assembleRelease
 
 发布 APK 位于 `app/build/outputs/apk/release/app-release.apk`。Release 使用本机 debug keystore 签名，便于在同一构建机上连续升级。
 
-`app/src/test` 中的独立审计程序覆盖 pathname 规范化、原始 ZIP 记录编辑、重复路径策略、路径穿越、非法 UTF-8、条目数上限、静态资源修补、嵌套 ZIP CRC 和原始记录差异比对。
+`app/src/test` 中的独立审计程序覆盖 pathname 规范化、原始 ZIP 记录编辑、重复路径策略、路径穿越、非法 UTF-8、条目数上限、静态资源修补、嵌套 ZIP CRC、原始记录差异比对，以及适配主题载荷标记门控（含真实商店主题载荷的负向样本与伪造标记拒绝）。
 
 命令行构建需在不入库的 `local.properties` 中设置 `sdk.dir`，或使用 `ANDROID_HOME`。机器相关的 `org.gradle.java.home` 应放在用户级 Gradle 配置中。
